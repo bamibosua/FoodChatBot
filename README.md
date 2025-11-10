@@ -1,2 +1,2 @@
 # FoodChatBot
-Chat CHat
+Chat Chat
