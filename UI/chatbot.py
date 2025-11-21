@@ -2,14 +2,50 @@
 import logging
 import json
 import base64
+import datetime
 import time
 from datetime import datetime
 from typing import List, Dict
 from streamlit_folium import st_folium
-
-import streamlit as st
 from PIL import Image, ImageEnhance
 from openai import OpenAI, OpenAIError
+import streamlit as st
+import pyrebase
+import firebase_admin
+import requests
+from datetime import datetime, timezone
+from firebase_admin import credentials, firestore
+from ollama import Client
+from streamlit_extras.stylable_container import stylable_container
+#add them thu vien
+import numpy as np
+import pandas as pd
+from firebase_admin import auth
+
+# ───────────────────────────────────────────────
+# FIREBASE SETUP — giữ nguyên logic ban đầu
+# ───────────────────────────────────────────────
+@st.cache_resource
+def get_firebase_clients():
+    firebase_cfg = st.secrets["firebase_client"]
+    firebase_app = pyrebase.initialize_app(firebase_cfg)
+    auth = firebase_app.auth()
+
+    if not firebase_admin._apps:
+        cred = credentials.Certificate(dict(st.secrets["firebase_admin"]))
+        firebase_admin.initialize_app(cred)
+    db = firestore.client()
+    return auth, db
+
+auth, db = get_firebase_clients()
+
+# Thêm vào đầu file, sau phần import
+# Khởi tạo session state
+if 'show_signup' not in st.session_state:
+    st.session_state.show_signup = False
+if 'logged_in' not in st.session_state:
+    st.session_state.logged_in = False
+
 
 # Import OSM routing module
 try:
@@ -52,7 +88,7 @@ def img_to_base64(image_path: str):
 
 def new_chat_id() -> str:
     """Generate a new chat id using timestamp for uniqueness."""
-    return datetime.utcnow().strftime("chat_%Y%m%d%H%M%S%f")
+    return datetime.now().strftime("chat_%Y%m%d%H%M%S%f")
 
 def save_current_chat():
     """Save the current open chat history into all_chats."""
@@ -65,21 +101,23 @@ def save_current_chat():
         }
         logging.info(f"Saved chat {cid} with {len(st.session_state.history)} messages.")
 
-def initialize_conversation() -> List[Dict]:
-    assistant_message = "Xin chào! Tôi là trợ lý du lịch của bạn. Tôi có thể giúp bạn tìm địa điểm tham quan, nhà hàng, khách sạn và lên kế hoạch cho chuyến đi. Bạn cần tôi giúp gì?"
+def initialize_conversation() -> List[Dict]: 
+    # Khởi tạo cuộc trò chuyện với tin nhắn ban đầu
+    assistant_message = "Xin chào! Tôi là dân sì gòn gốc, bạn muốn ăn gì? Tôi dẫn bạn dạt khắp sì gòn."
     return [
-        {"role": "system", "content": "You are a helpful tourism assistant. Provide recommendations for restaurants, hotels, attractions, and travel planning."},
-        {"role": "assistant", "content": assistant_message}
+        # Thiết lập vai trò hệ thống cho trợ lý du lịch: "You ... restaurants" là định hướng chung cho trợ lý.
+        {"role": "system", "content": "You are a helpful tourism assistant. Provide recommendations for restaurants"},
+        {"role": "assistant", "content": assistant_message} # Khởi tạo tin nhắn ban đầu từ trợ lý
     ]
 
 def get_chat_preview(history):
-    """Get a preview of the chat for display."""
+    # Lấy đoạn xem trước của cuộc trò chuyện
     if not history:
         return "Empty chat"
-    for msg in history:
+    for msg in history: # msg là dict với keys: role, content
         if msg.get("role") == "user":
             preview = msg.get("content", "")[:50]
-            return preview + "..." if len(msg.get("content", "")) > 50 else preview
+            return preview + "..." if len(msg.get("content", "")) > 50 else preview # Lấy tối đa 50 ký tự làm đoạn xem trước
     return "New conversation"
 
 # -----------------------
@@ -109,9 +147,9 @@ def initialize_session_state():
     if "show_map_sidebar" not in st.session_state:
         st.session_state.show_map_sidebar = True
     if "route_start" not in st.session_state:
-        st.session_state.route_start = "Thành phố Hồ Chí Minh, Việt Nam"
+        st.session_state.route_start = "Quận 2, Thành phố Hồ Chí Minh, Việt Nam"
     if "route_end" not in st.session_state:
-        st.session_state.route_end = "Hà Nội, Việt Nam"
+        st.session_state.route_end = "Quận 1, Thành phố Hồ Chí Minh, Việt Nam"
     if "saved_routes" not in st.session_state:
         st.session_state.saved_routes = []
 
@@ -120,28 +158,38 @@ initialize_session_state()
 # -----------------------
 # PAGE CONFIG + THEME
 # -----------------------
+
 st.set_page_config(
-    page_title="Tourism Chatbot 🌍",
-    page_icon="🌍",
-    layout="wide",
-    initial_sidebar_state="expanded"
+    page_title="Food Chatbot",
+    page_icon="🍽️",   # Biểu tượng đĩa thức ăn – chung chung, chuyên nghiệp
+    layout="wide"
 )
+
+st.markdown("""
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+""", unsafe_allow_html=True)
 
 # Modern CSS styling
 st.markdown("""
 <style>
     /* Main background */
     [data-testid="stAppViewContainer"] {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        #background-color: #fff9c4; /* Màu vàng nhạt */
+        background: linear-gradient(135deg, #fff176 0%, #6a1b9a 100%);
+        height: 100vh;  /* Đảm bảo gradient hiển thị đầy đủ */
+
+            
     }
     
     /* Sidebar styling */
     [data-testid="stSidebar"] {
-        background: linear-gradient(180deg, #2c3e50 0%, #34495e 100%);
+        #background: linear-gradient(180deg, #2c3e50 0%, #34495e 100%); /* Tối gradient */
+        background: linear-gradient(180deg, #1e3c72 0%, #2a5298 100%); /* Xanh dương gradient */
+            
     }
     
     [data-testid="stSidebar"] [data-testid="stMarkdownContainer"] {
-        color: #ecf0f1;
+        color: #ecf0f1; /* Màu chữ sáng trên sidebar tối */
     }
     
     /* Chat message styling */
@@ -159,8 +207,8 @@ st.markdown("""
         font-weight: 600;
         transition: all 0.3s ease;
         border: none;
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        color: white;
+        background: linear-gradient(135deg, #f7971e 0%, #ffd200 100%);
+        color: purple;
     }
     
     .stButton button:hover {
@@ -211,7 +259,7 @@ st.markdown("""
         background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
         padding: 15px;
         border-radius: 10px;
-        color: white;
+        color: purple;
         text-align: center;
         margin: 10px 0;
         font-weight: bold;
@@ -219,60 +267,318 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# -----------------------
-# LOGIN LOGIC
-# -----------------------
-def show_login_page():
-    st.markdown("""
-    <div class="login-card">
-        <h2 style="text-align: center; color: #667eea;">🔐 Đăng nhập</h2>
-        <p style="text-align: center; color: #666;">Vui lòng đăng nhập để sử dụng Tourism Chatbot</p>
-    </div>
-    """, unsafe_allow_html=True)
-    
-    col1, col2, col3 = st.columns([1, 2, 1])
-    with col2:
-        with st.form("login_form"):
-            username = st.text_input("👤 Tên đăng nhập", placeholder="Nhập tên đăng nhập")
-            password = st.text_input("🔒 Mật khẩu", type="password", placeholder="Nhập mật khẩu")
-            
-            col_a, col_b = st.columns(2)
-            login_btn = col_a.form_submit_button("🚀 Đăng nhập", use_container_width=True)
-            register_btn = col_b.form_submit_button("📝 Đăng ký", use_container_width=True)
-            
-            if login_btn:
-                if username and password:
-                    if username == "admin" and password == "admin":
-                        st.session_state.logged_in = True
-                        st.session_state.username = username
-                        st.success("✅ Đăng nhập thành công!")
-                        time.sleep(1)
-                        st.rerun()
-                    else:
-                        st.error("❌ Sai tên đăng nhập hoặc mật khẩu!")
-                else:
-                    st.warning("⚠️ Vui lòng nhập đầy đủ thông tin!")
-            
-            if register_btn:
-                if username and password:
-                    st.success("✅ Đăng ký thành công! Vui lòng đăng nhập.")
-                else:
-                    st.warning("⚠️ Vui lòng nhập đầy đủ thông tin!")
-        
-        st.info("💡 Demo: username='admin', password='admin'")
+import streamlit as st
 
-# Check login status
+st.markdown("""
+<style>
+/* Sidebar chính */
+[data-testid="stSidebar"] {
+    background: linear-gradient(180deg, #1e3c72 0%, #2a5298 100%) !important; /* Gradient xanh dương */
+    color: #ecf0f1; /* Màu chữ sáng */
+    padding: 20px; /* Padding trong sidebar */
+    border-top-right-radius: 20px; /* Bo góc trên phải */
+    border-bottom-right-radius: 20px; /* Bo góc dưới phải */
+    box-shadow: 2px 0 10px rgba(0, 0, 0, 0.2); /* Bóng bên cạnh */
+}
+
+/* Chữ trong markdown của sidebar */
+[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] {
+    color: #ecf0f1 !important;
+}
+
+/* Các nút trong sidebar */
+[data-testid="stSidebar"] button {
+    background-color: rgba(255, 255, 255, 0.1) !important;
+    color: purple !important;
+    border-radius: 10px !important;
+    margin: 5px 0;
+    padding: 8px 12px;
+    border: none !important;
+    font-weight: 600;
+    transition: all 0.3s ease;
+}
+
+/* Hover nút sidebar */
+[data-testid="stSidebar"] button:hover {
+    background-color: rgba(255, 255, 255, 0.2) !important;
+    transform: translateX(2px);
+}
+</style>
+""", unsafe_allow_html=True)
+
+
+def get_base64_image(image_path):
+    with open(image_path, "rb") as img_file:
+        return base64.b64encode(img_file.read()).decode()
+
+def login_form(guest_mode=False):
+    st.markdown(
+    """
+    <h1 style='color: black; font-family: Times New Roman; font-weight: 700; '>Food Chatbot</h1>
+    <p style='font-size: 20px;'>
+        <span style='color: black;font-family: Times New Roman;'>
+            <i>You would like to eat. Log in to chat with us 👇<i>
+        </span>
+    <!-- Divider -->
+    <div style='text-align: center; margin: 20px 0;'>
+        <hr style='border: 1px solid #7e3412; width: 100%; margin: 0 auto;'>
+    </div>
+        
+    </p>
+    """,
+    unsafe_allow_html=True
+)
+    with st.empty().container(border=False):
+        col1, _, col2 = st.columns([1,0.05,1])
+        
+        with col1:
+            # Sử dụng ảnh local từ thư mục data
+            image_path = "imgs/background.png"
+            image_base64 = get_base64_image(image_path)
+
+            css = f'''
+            <style>
+                .stApp {{
+                    background-image: url(data:image/jpeg;base64,{image_base64});
+                    background-size: cover;
+                    background-position: center;
+                    background-attachment: fixed;
+                }}
+                .stApp > header {{
+                    background-color: transparent;
+                }}
+                /* Đổi màu chữ input thành đen */
+                .stTextInput label {{
+                    color: black !important;
+                    font-weight: bold;
+                }}
+                .stTextInput input {{
+                    color: black !important;
+                }}
+            </style>
+            '''
+
+            st.markdown(css, unsafe_allow_html=True)
+            st.write("")
+            st.write("")
+            st.markdown("<br>", unsafe_allow_html=True)
+            # Hiển thị ảnh với căn chỉnh
+            img_base64 = get_base64_image("imgs/demo1.jpg")
+            st.markdown(
+                f'''
+                <div style="text-align: center;">
+                    <img src="data:image/jpeg;base64,{img_base64}" 
+                         style="width: 500px; height: 300px; object-fit: cover; border-radius: 20px;">
+                         <div style="display: flex; align-items: center; justify-content: center; height: 100%;">
+                            <img style="width: 100%; height: auto; max-height: 400px; ...">
+                         </div>
+                </div>
+                ''',
+            unsafe_allow_html=True)
+            #st.image("data/demo1.jpg", use_container_width=True)
+        
+        with col2:
+            st.markdown(
+                """
+                <h2 style= 
+                    'text-align : center; 
+                    color: black;
+                    font-family: Times New Roman; 
+                    margin: 0px'>Login</h2>
+                """,
+                unsafe_allow_html = True
+            )
+            
+            # Thêm CSS cho text input
+            st.markdown(
+                """
+                <style>
+                    div[data-testid="stTextInput"] label {
+                        color: black !important;
+                        font-weight: 600;
+                    }
+                    div[data-testid="stTextInput"] input {
+                        color: black !important;
+                    }
+                </style>
+                """,
+                unsafe_allow_html=True
+            )
+            
+            email = st.text_input("E-mail")
+            password = st.text_input("Password", type="password")
+
+            # Tạo 3 cột để căn giữa buttons
+            col_login, col_signup = st.columns([1, 1])
+
+            with col_login:
+                if st.button("Login", use_container_width=True):
+                    try:
+                         user = auth.sign_in_with_email_and_password(email, password)
+                         st.session_state.logged_in = True
+                         st.session_state.username = email.split('@')[0]
+                         st.success("Login successful!")
+                         st.rerun()
+                    except Exception as e:
+                            error_message = str(e)
+                            if "INVALID_PASSWORD" in error_message or "INVALID_LOGIN_CREDENTIALS" in error_message:
+                                st.error("Invalid email or password")
+            with col_signup:
+                if st.button("Sign Up", use_container_width=True):
+                    st.session_state.show_signup = True
+                    st.rerun()
+
+def signup_form():
+     st.markdown(
+    """
+    <h1 style='color: black; font-family: Times New Roman; font-weight: 700; '>Food Chatbot</h1>
+    <p style='font-size: 20px;'>
+        <span style='color: black;font-family: Times New Roman;'>
+            <i>You would like to eat. Log in to chat with us 👇<i>
+        </span>
+    <!-- Divider -->
+    <div style='text-align: center; margin: 20px 0;'>
+        <hr style='border: 1px solid #7e3412; width: 100%; margin: 0 auto;'>
+    </div>
+        
+    </p>
+    """,
+    unsafe_allow_html=True)
+    
+     with st.empty().container(border=False):
+        col1, _, col2 = st.columns([10,1,10])
+        
+        with col1:
+            # Sử dụng ảnh local từ thư mục data
+            image_path = "imgs/background.png"
+            image_base64 = get_base64_image(image_path)
+
+            css = f'''
+            <style>
+                .stApp {{
+                    background-image: url(data:image/jpeg;base64,{image_base64});
+                    background-size: cover;
+                    background-position: center;
+                    background-attachment: fixed;
+                }}
+                .stApp > header {{
+                    background-color: transparent;
+                }}
+                /* Đổi màu chữ input thành đen */
+                .stTextInput label {{
+                    color: black !important;
+                    font-weight: bold;
+                }}
+                .stTextInput input {{
+                    color: black !important;
+                }}
+            </style>
+            '''
+
+            st.markdown(css, unsafe_allow_html=True)
+            st.write("")
+            st.write("")
+            st.markdown("<br>", unsafe_allow_html=True)
+            # Hiển thị ảnh với căn chỉnh
+            img_base64 = get_base64_image("imgs/demo1.jpg")
+            st.markdown(
+                f'''
+                <div style="text-align: center;">
+                    <img src="data:image/jpeg;base64,{img_base64}" 
+                         style="width: 500px; height: 300px; object-fit: cover; border-radius: 10px;">
+                </div>
+                ''',
+            unsafe_allow_html=True)
+        st.markdown(css, unsafe_allow_html=True)
+        with col2:
+            st.markdown(
+                """
+                <h2 style= 
+                    'text-align : center; 
+                    color: black;
+                    font-family: Times New Roman; 
+                    margin: 0px'>Sign up</h2>
+                """,
+                unsafe_allow_html = True
+            )
+            
+            # Thêm CSS cho text input
+            st.markdown(
+                """
+                <style>
+                    div[data-testid="stTextInput"] label {
+                        color: black !important;
+                        font-weight: 600;
+                    }
+                    div[data-testid="stTextInput"] input {
+                        color: black !important;
+                    }
+                </style>
+                """,
+                unsafe_allow_html=True
+            )
+            email = st.text_input("Email")
+            password = st.text_input("Password (≥6 characters)", type="password")
+            col_create, col_back = st.columns(2)
+            
+            if st.button("Create Account", type="primary", use_container_width=True):
+                    try:
+                        user = auth.create_user_with_email_and_password(email, password)
+                        st.success("Sign up successfully. Please login now!")
+                         # Cho người dùng thấy thông báo thành công
+                        st.session_state.show_signup = False
+                        st.rerun()
+                    except Exception as e:
+                        error_message = str(e)
+                        if "INVALID_PASSWORD" in error_message or "INVALID_LOGIN_CREDENTIALS" in error_message:
+                                st.error("Invalid email or password")
+                        elif "EMAIL_NOT_FOUND" in error_message:
+                                st.error("Email not found. Please sign up first.")
+                        elif "TOO_MANY_ATTEMPTS" in error_message:
+                                st.error("Too many failed attempts. Please try again later.")
+                        elif "WEAK_PASSWORD" in error_message:
+                                st.error("Weak password. Please use at least 6 characters.")    
+                        elif "EMAIL_EXISTS" in error_message:
+                                st.error("Email already exists. Please use a different email.")
+                        else:
+                                st.error(f"Login error: {error_message}")
+            
+            with col_back:
+                if st.button("Back", type="secondary", use_container_width=True):
+                    st.session_state.show_signup = False
+                    st.rerun()
+
+
+# ========================
+# CHECK LOGIN - ĐẶT Ở CUỐI FILE
+# ========================
 if not st.session_state.logged_in:
-    show_login_page()
+    if st.session_state.show_signup:
+        signup_form()
+    else:
+        login_form()
     st.stop()
 
-# Header
-st.markdown("""
+
+import base64
+
+def load_image_base64(path):
+    with open(path, "rb") as f:
+        return base64.b64encode(f.read()).decode()
+
+img_base64 = load_image_base64("imgs/logo.png")  # đổi tên file theo đúng đường dẫn
+
+
+st.markdown(f"""
 <div class="custom-header">
-    <h1>🌍 Tourism Chatbot</h1>
+    <h1>
+        <img src="data:image/png;base64,{img_base64}" width="100" style="vertical-align: middle; margin-right: 5px;">
+        Tourism Chatbot
+    </h1>
     <p>Your intelligent travel companion with route planning</p>
 </div>
 """, unsafe_allow_html=True)
+
 
 # -----------------------
 # LAYOUT: Main + Right Sidebar
@@ -287,14 +593,14 @@ else:
 # LEFT SIDEBAR
 # -----------------------
 with st.sidebar:
-    # User profile section
+    # User profile section12
     st.markdown(f"""
     <div class="user-badge">
-        👤 {st.session_state.username}
+        <i class="fa-solid fa-user-astronaut"></i> {st.session_state.username}
     </div>
     """, unsafe_allow_html=True)
-    
-    if st.button("🚪 Đăng xuất", use_container_width=True):
+
+    if st.button("Log out", use_container_width=True):
         st.session_state.logged_in = False
         st.session_state.username = ""
         st.rerun()
@@ -302,63 +608,61 @@ with st.sidebar:
     st.markdown("---")
     
     # Toggle map sidebar
-    if st.checkbox("🗺️ Hiện bản đồ", value=st.session_state.show_map_sidebar):
+    if st.checkbox("🗺 Show Map", value=st.session_state.show_map_sidebar):
         st.session_state.show_map_sidebar = True
     else:
         st.session_state.show_map_sidebar = False
     
-    st.markdown("---")
-    st.markdown("# 🎯 Menu")
-    st.markdown("---")
-    
     # Menu with icons
     menu = st.radio(
-        "Chọn chức năng:",
-        ["💬 Chat mới", "📚 Lịch sử", "⭐ Yêu thích", "⚙️ Cài đặt"],
+        "Select Function:",
+        ["New Chat!", "History", "Favorites", "Settings"],
         index=0
     )
-    
-    st.markdown("---")
-    
+             
     # Quick stats
-    st.markdown("### 📊 Thống kê")
+    st.markdown('<i class="fa-solid fa-chart-column"></i> Statistics', unsafe_allow_html=True)
     col1, col2 = st.columns(2)
     with col1:
-        st.metric("Cuộc trò chuyện", len(st.session_state.all_chats))
+        st.metric("Chats", len(st.session_state.all_chats))
     with col2:
-        st.metric("Yêu thích", len(st.session_state.favorites))
+        st.metric("Favorites", len(st.session_state.favorites))
     
-    st.markdown("---")
+    st.markdown("---")   
 
 # -----------------------
 # MENU: NEW CHAT
 # -----------------------
-if menu == "💬 Chat mới":
+if menu == "New Chat!":
     with st.sidebar:
-        st.markdown("### 🆕 Bắt đầu cuộc trò chuyện mới")
+        st.markdown('<i class="fa-regular fa-comment-dots"></i> Start New Chat!', unsafe_allow_html=True)
         
-        if st.button("➕ Tạo chat mới", use_container_width=True):
+        if st.button("Create New Chat!", use_container_width=True):
             if st.session_state.current_chat_id:
                 save_current_chat()
             
             cid = new_chat_id()
             st.session_state.current_chat_id = cid
-            st.session_state.history = [{"role": "assistant", "content": "Xin chào! Tôi là trợ lý du lịch. Tôi có thể giúp bạn tìm nhà hàng, khách sạn, địa điểm tham quan hoặc lên kế hoạch cho chuyến đi. Bạn muốn tôi giúp gì?"}]
+            st.session_state.history = [{"role": "assistant", "content": "Hello! "}]
             st.session_state.conversation_history = initialize_conversation()
             st.rerun()
-        
         st.markdown("---")
-        st.info("💡 Mẹo: Nhấn nút ⭐ dưới tin nhắn bot để lưu vào mục yêu thích!")
+        st.markdown(
+    '<div style="background-color:#d1ecf1; color:#0c5460; padding:10px; border-radius:5px;">'
+    '<i class="fa-regular fa-lightbulb"></i> Trick: Press ❤ to save favorites!'
+    '</div>',
+    unsafe_allow_html=True
+    )   
 
 # -----------------------
 # MENU: CONVERSATION HISTORY
 # -----------------------
-elif menu == "📚 Lịch sử":
+elif menu == "History":
     with st.sidebar:
-        st.markdown("### 💬 Lịch sử cuộc trò chuyện")
+        st.markdown('<i class="fa-regular fa-comment"></i> Conversation History', unsafe_allow_html=True)
         
         if st.session_state.all_chats:
-            search_term = st.text_input("🔍 Tìm kiếm cuộc trò chuyện", "")
+            search_term = st.text_input('<i class="fa-regular fa-comment"></i> Search Conversations', "")
             
             ordered = sorted(st.session_state.all_chats.items(), key=lambda kv: kv[1].get("timestamp", ""), reverse=True)
             
@@ -371,12 +675,12 @@ elif menu == "📚 Lịch sử":
                 if search_term and search_term.lower() not in preview.lower() and search_term.lower() not in title.lower():
                     continue
                 
-                with st.expander(f"📝 {title[:30]}..."):
-                    st.caption(f"🕒 {timestamp}")
-                    st.write(f"💬 {preview}")
-                    
+                with st.expander(f'<i class="fa-regular fa-newspaper"></i> {title[:30]}...', expanded=False):
+                    st.markdown(f'<i class="fa-regular fa-clock"></i> {timestamp}', unsafe_allow_html=True)
+                    st.markdown(f'<i class="fa-regular fa-comment-dots"></i> {preview}', unsafe_allow_html=True)
+                                
                     col1, col2 = st.columns(2)
-                    if col1.button("📂 Mở", key=f"load_{chat_id}"):
+                    if col1.button("", key=f"load_{chat_id}"):
                         if st.session_state.current_chat_id:
                             save_current_chat()
                         st.session_state.current_chat_id = chat_id
@@ -384,7 +688,7 @@ elif menu == "📚 Lịch sử":
                         st.session_state.conversation_history = initialize_conversation()
                         st.rerun()
                     
-                    if col2.button("🗑️ Xóa", key=f"del_{chat_id}"):
+                    if col2.button("Remove", key=f"del_{chat_id}"):
                         st.session_state.all_chats.pop(chat_id, None)
                         st.session_state.chat_titles.pop(chat_id, None)
                         if st.session_state.current_chat_id == chat_id:
@@ -393,70 +697,72 @@ elif menu == "📚 Lịch sử":
                             st.session_state.conversation_history = []
                         st.rerun()
         else:
-            st.info("📭 Chưa có cuộc trò chuyện nào được lưu.")
+            st.markdown(
+            '<div style="background-color:#d1ecf1; color:#0c5460; padding:10px; border-radius:5px;">'
+            '<i class="fa-regular fa-paper-plane"></i> There are no saved conversations yet.'
+            '</div>',
+            unsafe_allow_html=True)
 
 # -----------------------
 # MENU: FAVORITES
 # -----------------------
-elif menu == "⭐ Yêu thích":
+elif menu == "Favorites":
     with st.sidebar:
-        st.markdown("### ⭐ Danh sách yêu thích")
+        st.markdown('<i class="fa-regular fa-heart"></i> Favorites', unsafe_allow_html=True)
         
         if st.session_state.favorites:
-            fav_search = st.text_input("🔍 Tìm trong yêu thích", "")
+            fav_search = st.text_input("Favorites Search", "")
             
             for i, fav in enumerate(st.session_state.favorites, start=1):
                 if fav_search and fav_search.lower() not in fav.lower():
                     continue
                 
-                with st.expander(f"⭐ Mục {i}"):
+                with st.expander(f" Item {i}"):
                     st.write(fav[:100] + "..." if len(fav) > 100 else fav)
-                    if st.button("🗑️ Xóa", key=f"remove_fav_{i}"):
+                    if st.button("Remove", key=f"remove_fav_{i}"):
                         st.session_state.favorites.remove(fav)
                         st.rerun()
             
             st.markdown("---")
-            if st.button("🗑️ Xóa tất cả yêu thích", use_container_width=True):
+            if st.button("Remove All Favorites", use_container_width=True):
                 st.session_state.favorites = []
                 st.rerun()
         else:
-            st.info("📭 Chưa có mục yêu thích nào.")
-
+            st.markdown(
+    '<div style="background-color:#f8d7da; color:#721c24; padding:10px; border-radius:5px;">'
+    '<i class="fa-solid fa-heart-crack"></i> There are no favorites yet.'
+    '</div>',
+    unsafe_allow_html=True
+)
+            
 # -----------------------
 # MENU: SETTINGS
 # -----------------------
-elif menu == "⚙️ Cài đặt":
+elif menu == "Settings":
     with st.sidebar:
-        st.markdown("### ⚙️ Cài đặt")
-        
-        model_option = st.selectbox(
-            "Chọn mô hình AI:",
-            ["gpt-4o-mini", "gpt-4o", "gpt-3.5-turbo"],
-            index=0
-        )
+        st.markdown('<i class="fa-solid fa-gear"></i> Settings', unsafe_allow_html=True)
         
         theme = st.selectbox(
-            "Chủ đề màu sắc:",
-            ["Tím (mặc định)", "Xanh dương", "Xanh lá"],
+            "Color Theme:",
+            ["Light Yellow (default)", "Blue", "Green", "Orange", "Pink", "Purple"],
             index=0
         )
         
-        msg_count = st.slider("Số tin nhắn hiển thị:", 10, 100, NUMBER_OF_MESSAGES_TO_DISPLAY)
+        msg_count = st.slider("Number of messages to display:", 10, 100, NUMBER_OF_MESSAGES_TO_DISPLAY)
         
         st.markdown("---")
         
-        if st.button("💾 Lưu cài đặt", use_container_width=True):
-            st.success("✅ Đã lưu cài đặt!")
+        if st.button("Save Settings", use_container_width=True):
+            st.success("Settings saved!")
         
         st.markdown("---")
-        st.markdown("### 📊 Thông tin ứng dụng")
+        st.markdown('<i class="fa-solid fa-chart-column"></i> App Statistics', unsafe_allow_html=True)
         st.info(f"""
-        - Phiên bản: 2.1
-        - Mô hình: {model_option}
-        - Tổng chat: {len(st.session_state.all_chats)}
-        - Yêu thích: {len(st.session_state.favorites)}
-        - Người dùng: {st.session_state.username}
-        - Tuyến đường đã lưu: {len(st.session_state.saved_routes)}
+        - Version: 2.1
+        - Total Chats: {len(st.session_state.all_chats)}
+        - Favorites: {len(st.session_state.favorites)}
+        - Users: {st.session_state.username}
+        - Saved Routes: {len(st.session_state.saved_routes)}
         """)
 
 # -----------------------
@@ -468,13 +774,13 @@ with main_col:
         cid = new_chat_id()
         st.session_state.current_chat_id = cid
         if not st.session_state.history:
-            st.session_state.history = [{"role": "assistant", "content": "Xin chào! Tôi có thể giúp bạn về du lịch như thế nào?"}]
+            st.session_state.history = [{"role": "assistant", "content": "Hello! How can I assist you with travel today?"}]
         if not st.session_state.conversation_history:
             st.session_state.conversation_history = initialize_conversation()
 
     # Display current chat title
-    current_title = st.session_state.chat_titles.get(st.session_state.current_chat_id, "Cuộc trò chuyện mới")
-    st.markdown(f"### 💬 {current_title}")
+    current_title = st.session_state.chat_titles.get(st.session_state.current_chat_id, "New Conversation")
+    st.markdown(f'<i class="fa-regular fa-comment"></i> {current_title}', unsafe_allow_html=True)
 
     # Chat messages
     for idx, message in enumerate(st.session_state.history[-NUMBER_OF_MESSAGES_TO_DISPLAY:]):
@@ -487,20 +793,25 @@ with main_col:
                 
                 col1, col2 = st.columns([1, 5])
                 with col1:
-                    if st.button("⭐", key=f"fav_{idx}"):
+                    if st.button("❤", key=f"fav_{idx}"):
                         if content.strip() not in st.session_state.favorites:
                             st.session_state.favorites.append(content.strip())
-                            st.success("✅ Đã thêm vào yêu thích!")
+                            st.success("Added to favorites!")
                             save_current_chat()
                         else:
-                            st.info("ℹ️ Đã có trong yêu thích.")
+                            st.markdown(
+    '<div style="background-color:#f8d7da; color:#721c24; padding:10px; border-radius:5px;">'
+    '<i class="fa-solid fa-check"></i> Already in favorites.'
+    '</div>',
+    unsafe_allow_html=True
+)
         else:
-            with st.chat_message("user", avatar="👤"):
+            with st.chat_message("user", avatar=""):
                 st.write(content)
 
     # Chat input
     st.markdown("---")
-    user_input = st.chat_input("💬 Nhập tin nhắn của bạn...")
+    user_input = st.chat_input("Enter your message...")
 
     if user_input:
         user_message = user_input.strip()
@@ -509,15 +820,15 @@ with main_col:
             st.session_state.conversation_history.append({"role": "user", "content": user_message})
             
             try:
-                with st.spinner("🤔 Đang suy nghĩ..."):
+                with st.spinner("Thinking..."):
                     response = client.chat.completions.create(
                         model=DEFAULT_MODEL,
                         messages=st.session_state.conversation_history
                     )
                     assistant_reply = response.choices[0].message.content
             except OpenAIError as e:
-                assistant_reply = f"❌ Lỗi: {e}"
-                logging.error("OpenAIError: %s", e)
+                assistant_reply = f" Error: {e}"
+                logging.error("Chatbot error: %s", e)
             
             st.session_state.history.append({"role": "assistant", "content": assistant_reply})
             st.session_state.conversation_history.append({"role": "assistant", "content": assistant_reply})
@@ -530,12 +841,12 @@ with main_col:
     col1, col2, col3, col4 = st.columns([1, 1, 1, 2])
 
     with col1:
-        if st.button("💾 Lưu", use_container_width=True):
+        if st.button("Save", use_container_width=True):
             save_current_chat()
-            st.success("✅ Đã lưu!")
+            st.success("Saved!")
 
     with col2:
-        if st.button("🗑️ Xóa", use_container_width=True):
+        if st.button("Delete", use_container_width=True):
             st.session_state.history = []
             st.session_state.conversation_history = initialize_conversation()
             if st.session_state.current_chat_id:
@@ -547,7 +858,7 @@ with main_col:
             st.rerun()
 
     with col3:
-        if st.button("📤 Xuất", use_container_width=True):
+        if st.button("Export", use_container_width=True):
             export_data = {
                 "chat_id": st.session_state.current_chat_id,
                 "title": current_title,
@@ -555,19 +866,19 @@ with main_col:
                 "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             }
             st.download_button(
-                "📥 Tải xuống JSON",
+                "Export Chat",
                 data=json.dumps(export_data, ensure_ascii=False, indent=2),
                 file_name=f"chat_{st.session_state.current_chat_id}.json",
                 mime="application/json"
             )
 
     with col4:
-        new_title = st.text_input("✏️ Đặt tên chat", placeholder="Nhập tên...", label_visibility="collapsed")
-        if st.button("✅ Đặt tên", use_container_width=True):
+        new_title = st.text_input("Rename chat", placeholder="Enter a name...", label_visibility="collapsed")
+        if st.button("Rename", use_container_width=True):
             if new_title.strip():
                 st.session_state.chat_titles[st.session_state.current_chat_id] = new_title.strip()
                 save_current_chat()
-                st.success(f"✅ Đã đổi tên: {new_title}")
+                st.success(f"Renamed to: {new_title}")
                 st.rerun()
 
 # -----------------------
@@ -575,23 +886,23 @@ with main_col:
 # -----------------------
 if map_col is not None:
     with map_col:
-        st.markdown("### 🗺️ Lập tuyến đường")
+        st.markdown('<i class="fa-solid fa-map-location"></i> Route Planning', unsafe_allow_html=True)
         
         # Route planning form
         with st.form("route_form"):
             start_loc = st.text_input(
-                "📍 Điểm đi", 
+                "Starting Point", 
                 value=st.session_state.get("route_start", ""),
-                placeholder="VD: Thành phố Hồ Chí Minh"
+                placeholder="E.g., Ho Chi Minh City"
             )
             
             end_loc = st.text_input(
-                "🏁 Điểm đến", 
+                "Destination", 
                 value=st.session_state.get("route_end", ""),
-                placeholder="VD: Hà Nội"
+                placeholder="E.g., Hanoi"
             )
             
-            submit_route = st.form_submit_button("🚗 Tìm tuyến đường", use_container_width=True)
+            submit_route = st.form_submit_button("Find Route", use_container_width=True)
         
         # Xử lý submit hoặc trigger từ nút khác
         if submit_route or st.session_state.get("submit_route", False) or st.session_state.get("reload_trigger", False):
@@ -600,7 +911,7 @@ if map_col is not None:
             st.session_state.route_start = start_loc
             st.session_state.route_end = end_loc
             
-            with st.spinner("🔍 Đang tìm tuyến đường..."):
+            with st.spinner("Calculating route..."):
                 route_map, route_info = create_route_map(start_loc, end_loc)
                 if route_map:
                     st.session_state.route_map = route_map
@@ -622,7 +933,7 @@ if map_col is not None:
             )
             
             # Nút lưu tuyến
-            if st.button("💾 Lưu tuyến đường", use_container_width=True):
+            if st.button("Save Route", use_container_width=True):
                 route_data = {
                     "start": st.session_state.route_start,
                     "end": st.session_state.route_end,
@@ -631,20 +942,20 @@ if map_col is not None:
                 }
                 if route_data not in st.session_state.saved_routes:
                     st.session_state.saved_routes.append(route_data)
-                    st.success("✅ Đã lưu tuyến đường!")
+                    st.success("Route saved!")
 
         # Quick route templates
         st.markdown("---")
-        st.markdown("### 🚀 Tuyến phổ biến")
+        st.markdown('<i class="fa-solid fa-location-pin"></i> Popular Routes', unsafe_allow_html=True)
         popular_routes = [
-            {"name": "TPHCM → Hà Nội", "start": "Thành phố Hồ Chí Minh", "end": "Hà Nội"},
-            {"name": "TPHCM → Đà Nẵng", "start": "Thành phố Hồ Chí Minh", "end": "Đà Nẵng"},
-            {"name": "Hà Nội → Hạ Long", "start": "Hà Nội", "end": "Hạ Long"},
-            {"name": "TPHCM → Vũng Tàu", "start": "Thành phố Hồ Chí Minh", "end": "Vũng Tàu"},
-            {"name": "TPHCM → Đà Lạt", "start": "Thành phố Hồ Chí Minh", "end": "Đà Lạt"}
+            {"name": "HCMC → Hanoi", "start": "Ho Chi Minh City", "end": "Hanoi"},
+            {"name": "HCMC → Da Nang", "start": "Ho Chi Minh City", "end": "Da Nang"},
+            {"name": "Hanoi → Ha Long", "start": "Hanoi", "end": "Ha Long"},
+            {"name": "HCMC → Vung Tau", "start": "Ho Chi Minh City", "end": "Vung Tau"},
+            {"name": "HCMC → Da Lat", "start": "Ho Chi Minh City", "end": "Da Lat"}
         ]
         for route in popular_routes:
-            if st.button(f"🛣️ {route['name']}", key=f"route_{route['name']}", use_container_width=True):
+            if st.button(f"{route['name']}", key=f"route_{route['name']}", use_container_width=True):
                 st.session_state.route_start = route['start']
                 st.session_state.route_end = route['end']
                 st.session_state.submit_route = True
@@ -652,30 +963,30 @@ if map_col is not None:
         # Saved routes
         if st.session_state.saved_routes:
             st.markdown("---")
-            st.markdown("### 📁 Tuyến đã lưu")
+            st.markdown('<i class="fa-solid fa-street-view"></i> Saved Routes', unsafe_allow_html=True)
             for i, saved in enumerate(st.session_state.saved_routes):
-                with st.expander(f"🗺️ {saved['start'][:15]}... → {saved['end'][:15]}..."):
-                    st.write(f"**Điểm đi:** {saved['start']}")
-                    st.write(f"**Điểm đến:** {saved['end']}")
+                with st.expander(f"{saved['start'][:15]}... → {saved['end'][:15]}..."):
+                    st.write(f"**Start:** {saved['start']}")
+                    st.write(f"**End:** {saved['end']}")
                     st.write(f"**{saved['info']}**")
-                    st.caption(f"🕒 {saved['timestamp']}")
+                    st.caption(f"{saved['timestamp']}")
                     
                     col_a, col_b = st.columns(2)
-                    if col_a.button("🔄 Tải lại", key=f"reload_route_{i}"):
+                    if col_a.button("Reload", key=f"reload_route_{i}"):
                         st.session_state.route_start = saved['start']
                         st.session_state.route_end = saved['end']
                         st.session_state.reload_trigger = True
                     
-                    if col_b.button("🗑️ Xóa", key=f"delete_route_{i}"):
+                    if col_b.button("Delete", key=f"delete_route_{i}"):
                         st.session_state.saved_routes.pop(i)
                         st.experimental_rerun = False  # Không cần nữa, reload_trigger sẽ xử lý
 
         # Map info
         st.markdown("---")
         st.info("""
-        💡 **Hướng dẫn:**
-        - Nhập tên địa điểm (VD: Thành phố Hồ Chí Minh)
-        - Click "Tìm tuyến đường"
-        - Xem bản đồ và thông tin chi tiết
-        - Lưu tuyến yêu thích
+        💡 **Instructions:**
+        - Enter location names (e.g., Ho Chi Minh City, Hanoi)
+        - Click "Find Route"
+        - View map and detailed information
+        - Save favorite routes
         """)
