@@ -134,3 +134,5 @@ openai
 requests
 Image
 langchain
+folium
+streamlit-folium
