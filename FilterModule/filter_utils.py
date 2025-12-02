@@ -1,7 +1,10 @@
+# filter_utils.py
 import pandas as pd
 import re
 from datetime import datetime
-import utils
+from geo_utils import geocode_location, haversine
+from time_utils import is_open
+from price_utils import parse_price
 
 def prefilter(df, location=None, current_time=None):
     if current_time is None:
@@ -23,7 +26,7 @@ def prefilter(df, location=None, current_time=None):
     
     df_filtered = pd.DataFrame(filtered_rows)
     
-    open_status = df_filtered["open_hours"].apply(lambda t: utils.is_open(t, current_time))
+    open_status = df_filtered["open_hours"].apply(lambda t: is_open(t, current_time))
     df_filtered["is_open"] = [x[0] for x in open_status]
     df_filtered["minutes_left"] = [x[1] for x in open_status]
     df_filtered = df_filtered[(df_filtered["is_open"]) & (df_filtered["minutes_left"] >= 30)]
@@ -36,13 +39,11 @@ def postfilter(df, taste=None, budget=None, foods=None, original_location=None, 
 
     filtered_data = []
     
-    # Parse input parameters with strict None/empty checking
     required_tags = set()
     required_foods = None
     has_taste = False
     has_foods = False
 
-    # Check taste (handle None, "None", empty list, empty string)
     if taste is not None and taste != "None" and taste != "none":
         if isinstance(taste, str):
             clean = taste.strip()
@@ -52,7 +53,6 @@ def postfilter(df, taste=None, budget=None, foods=None, original_location=None, 
             required_tags = {str(t).strip().lower() for t in taste if t and str(t).strip().lower() != "none"}
         has_taste = bool(required_tags)
 
-    # Check foods (handle None, "None", empty string)
     if foods is not None and foods != "None" and foods != "none":
         if isinstance(foods, str):
             clean = str(foods).strip()
@@ -66,9 +66,8 @@ def postfilter(df, taste=None, budget=None, foods=None, original_location=None, 
                 required_foods = cleaned_list
                 has_foods = True
 
-    parsed_budget = utils.parse_price(budget)
+    parsed_budget = parse_price(budget)
 
-    # DEBUG: Print filter status
     print(f"\n[POSTFILTER DEBUG]")
     print(f"  has_taste: {has_taste} | tags: {required_tags if has_taste else 'N/A'}")
     print(f"  has_foods: {has_foods} | food: {required_foods if has_foods else 'N/A'}")
@@ -84,15 +83,14 @@ def postfilter(df, taste=None, budget=None, foods=None, original_location=None, 
         print("NO filter (keep all, check budget only)")
     print()
 
-    # ✅ Calculate distance from original location
     if original_location and not is_fallback:
         try:
-            root_lat, root_lon = utils.geocode_location(original_location)
+            root_lat, root_lon = geocode_location(original_location)
             dists = []
             for _, row in df.iterrows():
                 try:
                     lat, lon = map(float, str(row["coordinates"]).split(","))
-                    d = utils.haversine(root_lat, root_lon, lat, lon)
+                    d = haversine(root_lat, root_lon, lat, lon)
                     dists.append(d)
                 except:
                     dists.append(float("inf"))
@@ -100,11 +98,9 @@ def postfilter(df, taste=None, budget=None, foods=None, original_location=None, 
         except:
             df["distance_km"] = float("inf")
 
-    # ✅ NEW LOGIC: Filter based on combination of taste + foods
     for _, row in df.iterrows():
         match_score = 1.0 if not is_fallback else 0.5
         
-        # --- Check taste match ---
         taste_match = False
         taste_score = 0
         if has_taste:
@@ -115,13 +111,11 @@ def postfilter(df, taste=None, budget=None, foods=None, original_location=None, 
                 taste_match = True
                 taste_score = match_count * 0.15
 
-        # --- Check foods match ---
         foods_match = False
         foods_score = 0
         if has_foods:
             food_tag = str(row.get("food_tags", "")).strip().lower()
             
-            # ✅ AND LOGIC: Kiểm tra TẤT CẢ từ khóa đều phải có
             match_all = True
             for food_keyword in required_foods:
                 if not re.search(rf'\b{re.escape(food_keyword)}\b', food_tag):
@@ -132,26 +126,19 @@ def postfilter(df, taste=None, budget=None, foods=None, original_location=None, 
                 foods_match = True
                 foods_score = 0.5
 
-        # APPLY LOGIC BASED ON COMBINATION
         if has_foods and has_taste:
-            # Case 1: Both foods & taste specified
             if foods_match and taste_match:
-                # Perfect match: both criteria met
                 match_score += foods_score + taste_score
             elif foods_match:
-                # Foods match only (higher priority)
                 match_score += foods_score
             elif taste_match:
-                # Taste match only (lower priority)
                 match_score += taste_score * 0.5
             else:
-                # No match
                 if not is_fallback:
                     continue
                 match_score = min(match_score, 0.4)
                 
         elif has_foods:
-            # Case 2: Only foods specified → IGNORE taste
             if not foods_match:
                 if not is_fallback:
                     continue
@@ -160,7 +147,6 @@ def postfilter(df, taste=None, budget=None, foods=None, original_location=None, 
                 match_score += foods_score
                 
         elif has_taste:
-            # Case 3: Only taste specified → IGNORE foods
             if not taste_match:
                 if not is_fallback:
                     continue
@@ -168,10 +154,8 @@ def postfilter(df, taste=None, budget=None, foods=None, original_location=None, 
             else:
                 match_score += taste_score
 
-        # Case 4: Neither foods nor taste → keep all restaurants (filter by budget only)
-        # Check budget (applies to all cases)
         if parsed_budget is not None:
-            min_price = utils.parse_price(str(row.get("budget", "")))
+            min_price = parse_price(str(row.get("budget", "")))
             if min_price is not None:
                 if min_price > parsed_budget:
                     if not is_fallback:
@@ -179,7 +163,6 @@ def postfilter(df, taste=None, budget=None, foods=None, original_location=None, 
                     else:
                         match_score = min(match_score, 0.5)
 
-        # Cap match_score
         match_score = min(match_score, 1.5)
         
         row_dict = row.to_dict()
@@ -190,7 +173,6 @@ def postfilter(df, taste=None, budget=None, foods=None, original_location=None, 
     if filtered.empty:
         return filtered
 
-    # Sort by match_score, then distance
     if "distance_km" in filtered.columns:
         filtered = filtered.sort_values(["match_score", "distance_km"], ascending=[False, True])
     else:
@@ -198,8 +180,6 @@ def postfilter(df, taste=None, budget=None, foods=None, original_location=None, 
 
     return filtered
 
-# Expanded search function when main address does not have enough restaurants
-# Expand filter to neighboring areas
 def fallback_expand_search(full_df, original_location, taste=None, budget=None, foods=None,
                            existing_results_df=None, min_results=5, current_time=None):
 
@@ -213,13 +193,12 @@ def fallback_expand_search(full_df, original_location, taste=None, budget=None, 
     need = min_results - current_count
 
     try:
-        root_lat, root_lon = utils.geocode_location(original_location)
+        root_lat, root_lon = geocode_location(original_location)
     except:
         return existing_results_df
 
-    # Filter open_hours first
     df_open = full_df.copy()
-    open_status = df_open["open_hours"].apply(lambda t: utils.is_open(t, current_time))
+    open_status = df_open["open_hours"].apply(lambda t: is_open(t, current_time))
     df_open["is_open"] = [x[0] for x in open_status]
     df_open["minutes_left"] = [x[1] for x in open_status]
     df_open = df_open[(df_open["is_open"]) & (df_open["minutes_left"] >= 30)]
@@ -227,7 +206,6 @@ def fallback_expand_search(full_df, original_location, taste=None, budget=None, 
     if df_open.empty:
         return existing_results_df
 
-    # Eliminate existing restaurants
     if not existing_results_df.empty:
         used = set(existing_results_df["id"])
         df_open = df_open[~df_open["id"].isin(used)]
@@ -235,10 +213,8 @@ def fallback_expand_search(full_df, original_location, taste=None, budget=None, 
     if df_open.empty:
         return existing_results_df
 
-   # Filter by foods if available
     candidates = df_open.copy()
     
-    # Parse foods parameter
     required_foods = None
     has_foods = False
     
@@ -254,7 +230,7 @@ def fallback_expand_search(full_df, original_location, taste=None, budget=None, 
             if cleaned_list:
                 required_foods = cleaned_list
                 has_foods = True
- 
+
     candidates = df_open.copy()
     
     if has_foods and required_foods:
@@ -262,7 +238,6 @@ def fallback_expand_search(full_df, original_location, taste=None, budget=None, 
         for _, row in candidates.iterrows():
             food_tag = str(row.get("food_tags", "")).strip().lower()
             
-            # All keywords must be present
             match_all = True
             for food_keyword in required_foods:
                 if not re.search(rf'\b{re.escape(food_keyword)}\b', food_tag):
@@ -273,35 +248,29 @@ def fallback_expand_search(full_df, original_location, taste=None, budget=None, 
         
         candidates = candidates[food_matches]
 
-    # Filter by budget
-    parsed_budget = utils.parse_price(budget)
+    parsed_budget = parse_price(budget)
 
-    # Calculate distance and arrange
     def compute_dist(coord_str):
         try:
             lat, lon = map(float, coord_str.split(","))
-            return utils.haversine(root_lat, root_lon, lat, lon)
+            return haversine(root_lat, root_lon, lat, lon)
         except:
             return float("inf")
 
     candidates["distance_km"] = candidates["coordinates"].apply(compute_dist)
-    candidates["match_score"] = 0.5  # Fixed score for fallback
+    candidates["match_score"] = 0.5
 
-    # Sort by rating and distance
     candidates["rating"] = pd.to_numeric(candidates["rating"], errors="coerce")
     candidates = candidates.sort_values(
         ["rating", "distance_km"],
         ascending=[False, True]
     )
 
-    # Take the required quantity
     to_add = candidates.head(need).copy()
 
-    # Incorporate into main results
     final = pd.concat([existing_results_df, to_add], ignore_index=True)
     return final
 
-# Function save list of final result
 def filter_and_split_restaurants(full_df, location, taste=None, budget=None, 
                                  foods=None, current_time=None, min_results=5):
     if current_time is None:
@@ -317,7 +286,6 @@ def filter_and_split_restaurants(full_df, location, taste=None, budget=None,
         is_fallback=False
     )
     
-    # Sort main_results before saving
     if not main_results.empty:
         main_results["rating"] = pd.to_numeric(main_results["rating"], errors="coerce")
         main_results = main_results.sort_values(
@@ -343,7 +311,6 @@ def filter_and_split_restaurants(full_df, location, taste=None, budget=None,
         current_time=current_time
     )
 
-    # Sort final_results before splitting into 2 list
     if not final_results.empty:
         final_results["rating"] = pd.to_numeric(final_results["rating"], errors="coerce")
         final_results = final_results.sort_values(

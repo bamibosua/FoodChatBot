@@ -1,31 +1,7 @@
+# time_utils.py
 import re
-from math import radians, cos, sin, asin, sqrt
 from datetime import datetime, timedelta
-import config
 
-def geocode_location(location: str):
-    location = location.strip()
-    if not location:
-        raise ValueError("Location không được để trống")
-    
-    loc_lower = location.lower()
-    for key, coord in config.DISTRICT_CENTERS.items():
-        if key.lower() in loc_lower or loc_lower in key.lower():
-            return coord
-    
-    return config.DISTRICT_CENTERS["District 1"]
-
-# Hàm công thức tính tọa độ
-def haversine(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
-    R = 6371.0
-    lat1, lon1, lat2, lon2 = map(radians, [lat1, lon1, lat2, lon2])
-    dlat = lat2 - lat1
-    dlon = lon2 - lon1
-    a = sin(dlat/2)**2 + cos(lat1) * cos(lat2) * sin(dlon/2)**2
-    c = 2 * asin(sqrt(a))
-    return round(R * c, 3)
-
-# Hàm thời gian
 def parse_hhmm(s: str):
     s = s.strip().replace(" ", "")
     if s == "24:00":
@@ -35,7 +11,6 @@ def parse_hhmm(s: str):
     except ValueError:
         return datetime.strptime("00:00", "%H:%M").time(), False
 
-# Hàm check quán còn mở cửa hay không
 def is_open(time_range: str, current_time: str, min_open_minutes: int = 30):
     try:
         if not isinstance(time_range, str) or not time_range.strip():
@@ -80,37 +55,3 @@ def is_open(time_range: str, current_time: str, min_open_minutes: int = 30):
             
     except Exception:
         return True, 9999
-
-# Bộ lọc giá theo 2 trường hợp, 1 giá và khoảng giá (min-max)
-def parse_price(raw):
-    if not raw:
-        return None
-
-    # Chuyển về chuỗi thường, xóa khoảng trắng đầu đuôi
-    s = str(raw).lower().strip()
-
-    # --- CASE 1: Xử lý input kiểu "100k", "1.5k", "50k - 100k" ---
-    if 'k' in s:
-        # Cắt lấy phần trước chữ 'k' đầu tiên (để xử lý dạng khoảng giá 50k-100k -> lấy 50)
-        first_part = s.split('k')[0]
-        
-        # Giữ lại số và dấu chấm/phẩy (để xử lý số thập phân 1.5)
-        clean_num = re.sub(r'[^\d.,]', '', first_part).replace(',', '.')
-        
-        try:
-            # Nhân 1000 -> ép kiểu int
-            return int(float(clean_num) * 1000)
-        except ValueError:
-            return None
-
-    # --- CASE 2: Xử lý input kiểu full số "100.000", "100,000", "100.000đ" ---
-    # Logic cũ của bạn: Xóa hết dấu chấm phẩy để nối số lại
-    s = s.replace("đ", "").replace("vnd", "")
-    s = s.replace(".", "").replace(",", "") 
-    
-    nums = re.findall(r'\d+', s)
-    if not nums:
-        return None
-
-    # Lấy số đầu tiên tìm thấy
-    return int(nums[0])
