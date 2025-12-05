@@ -5,8 +5,7 @@ from UI.config.settings import auth
 from UI.utils.helpers import title_form, background_image, food_image
 from UI.auth.logics import handle_login, handle_signup
 from UI.config.styles import get_login_title_style, get_signup_title_style, get_forgot_password_title_style, get_image_container_style
-#========================================FORMS ========================================
-
+#========================================FORMS =======================================
 def login_form(guest_mode=False):
     #Header và mô tả
     title_form()

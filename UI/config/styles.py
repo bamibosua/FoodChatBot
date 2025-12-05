@@ -44,7 +44,6 @@ def apply_main_styles():
                 background-color: rgba(255, 255, 255, 0.2) !important;
                 transform: translateX(2px);
             }
-            
             /* Chat message styling */
             [data-testid="stChatMessage"] {
                 background-color: rgba(255, 255, 255, 0.95);
@@ -146,6 +145,30 @@ def apply_sidebar_styles():
                     background: rgba(30, 60, 114, 0.95) !important;
                     backdrop-filter: blur(10px);
                 }
+                [data-testid="stMetricValue"] {
+                    color: white !important; /* Đổi màu ở đây (Ví dụ: Màu đỏ Streamlit) */
+                    font-size: 40px;      /* Bạn cũng có thể chỉnh kích thước nếu muốn */
+                }      
+                 /* Chỉnh màu expander header */
+                 .streamlit-expanderHeader {
+                     background-color: black!important;
+                     border-radius: 8px !important;
+                     padding: 8px 12px !important;
+                     font-weight: 600 !important;
+                     color: #262730 !important;
+                 }
+
+                 /* Khi hover vào expander */
+                 .streamlit-expanderHeader:hover {
+                     background-color: black !important;
+                     color: #000000 !important;
+                 }
+
+                 /* Expander content */
+                 .streamlit-expanderContent {
+                     background-color: transparent !important;
+                     border: none !important;
+                 }    
             </style>
             """, unsafe_allow_html=True)
 

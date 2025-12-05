@@ -1,5 +1,6 @@
 import streamlit as st
 from UI.config.settings import auth
+from UI.utils.helpers import load_user_chats
 
 #========================================SIGN UP & LOGIN HANDLERS ========================
 def handle_signup(email: str, password: str) -> bool:

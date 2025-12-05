@@ -14,7 +14,7 @@ from Translator.translator import get_original_language, translate_text
 def init_food_state():
     defaults = {
         "history": [],
-        "conversation_history": initialize_conversation(),
+        "conversation_history": initialize_conversation(st.session_state.current_chat_id, st.session_state.username),
         "final_data": {"location": None, "taste": [], "budget": None, "foods": []},
         "city": None,
         "chat_titles": {},
