@@ -91,12 +91,17 @@ def buildReplyForUserPrompt(inputData: dict):
     Style: friendly, creative, elegant, and well-formatted.
     """
     
-def buildFixUserSpellingPrompt(inputData: str):
+def buildFixUserSpellingPrompt(inputData: list):
     return f"""
-   Fix all spelling mistakes in the following text. 
-   Convert written numbers into digits (e.g. "one hundred k" → "100k", "two thousand k" → "2000k").
-   Convert numbers to numbers + k (100000 -> 100k).
-   Input: "{inputData}"
+    Fix all spelling mistakes in each sentence.
+    Normalize each sentence for better NER performance:
+    - Remove unnecessary words.
+    - Convert written numbers to digits (e.g. "one hundred k" → "100k")
+    - Convert large numbers to k format (e.g. 100000 → 100k)
 
-   Return only the corrected text as a string.
-   """
+    Input is a LIST of sentences:
+    {inputData}
+
+    Return the corrected sentences as a JSON list of strings.
+    Only return JSON. Do NOT add explanations.
+    """
