@@ -1,329 +1,191 @@
-# filter_utils.py
-import pandas as pd
+import os
 import re
-from datetime import datetime
-from geo_utils import geocode_location, haversine
-from time_utils import is_open
-from price_utils import parse_price
+import json
+import google.generativeai as genai
+from .time_utils import filter_open_restaurants
+from .price_utils import parse_price
 
-def prefilter(df, location=None, current_time=None):
-    if current_time is None:
-        current_time = datetime.now().strftime("%H:%M")
-    df = df.copy()
+
+# Dùng Flash là chuẩn bài cho tốc độ
+MODEL_NAME = "gemini-2.5-flash"
+
+def ai_check_food_relevance_batch(restaurants, food_query, api_key):
+    """
+    AI Filter tối ưu tốc độ (Low Latency).
+    """
+    if not food_query or not restaurants or not api_key: 
+        return restaurants
+
+    # 1. Rút gọn dữ liệu đầu vào tối đa (Chỉ gửi thông tin cần thiết)
+    input_list = [
+        {'id': i, 'n': r.get('title', ''), 't': r.get('types', [])} 
+        for i, r in enumerate(restaurants)
+    ]
     
-    filtered_rows = []
-    if location and location.strip():
-        location_clean = location.strip().lower()
-        for _, row in df.iterrows():
-            district_clean = str(row['district']).strip().lower()
-            if district_clean == location_clean:
-                filtered_rows.append(row.to_dict())
-    else:
-        filtered_rows = df.to_dict('records')
-    
-    if not filtered_rows:
-        return pd.DataFrame()
-    
-    df_filtered = pd.DataFrame(filtered_rows)
-    
-    open_status = df_filtered["open_hours"].apply(lambda t: is_open(t, current_time))
-    df_filtered["is_open"] = [x[0] for x in open_status]
-    df_filtered["minutes_left"] = [x[1] for x in open_status]
-    df_filtered = df_filtered[(df_filtered["is_open"]) & (df_filtered["minutes_left"] >= 30)]
-    
-    return df_filtered
-
-def postfilter(df, taste=None, budget=None, foods=None, original_location=None, is_fallback=False):
-    if df.empty:
-        return pd.DataFrame()
-
-    filtered_data = []
-    
-    required_tags = set()
-    required_foods = None
-    has_taste = False
-    has_foods = False
-
-    if taste is not None and taste != "None" and taste != "none":
-        if isinstance(taste, str):
-            clean = taste.strip()
-            if clean and clean.lower() != "none":
-                required_tags = {t.strip().lower() for t in clean.split(",") if t.strip() and t.strip().lower() != "none"}
-        elif isinstance(taste, list):
-            required_tags = {str(t).strip().lower() for t in taste if t and str(t).strip().lower() != "none"}
-        has_taste = bool(required_tags)
-
-    if foods is not None and foods != "None" and foods != "none":
-        if isinstance(foods, str):
-            clean = str(foods).strip()
-            if clean and clean.lower() != "none":
-                required_foods = [clean.lower()]
-                has_foods = True
-        elif isinstance(foods, list):
-            cleaned_list = [str(f).strip().lower() for f in foods 
-                          if f and str(f).strip().lower() != "none"]
-            if cleaned_list:
-                required_foods = cleaned_list
-                has_foods = True
-
-    parsed_budget = parse_price(budget)
-
-    print(f"\n[POSTFILTER DEBUG]")
-    print(f"  has_taste: {has_taste} | tags: {required_tags if has_taste else 'N/A'}")
-    print(f"  has_foods: {has_foods} | food: {required_foods if has_foods else 'N/A'}")
-    print(f"  budget: {parsed_budget if parsed_budget else 'N/A'}")
-    print(f"  Mode: ", end="")
-    if has_foods and has_taste:
-        print("BOTH foods + taste")
-    elif has_foods:
-        print("ONLY foods (ignore taste)")
-    elif has_taste:
-        print("ONLY taste (ignore foods)")
-    else:
-        print("NO filter (keep all, check budget only)")
-    print()
-
-    if original_location and not is_fallback:
-        try:
-            root_lat, root_lon = geocode_location(original_location)
-            dists = []
-            for _, row in df.iterrows():
-                try:
-                    lat, lon = map(float, str(row["coordinates"]).split(","))
-                    d = haversine(root_lat, root_lon, lat, lon)
-                    dists.append(d)
-                except:
-                    dists.append(float("inf"))
-            df["distance_km"] = dists
-        except:
-            df["distance_km"] = float("inf")
-
-    for _, row in df.iterrows():
-        match_score = 1.0 if not is_fallback else 0.5
-        
-        taste_match = False
-        taste_score = 0
-        if has_taste:
-            row_tags = str(row.get("taste_tags", "")).lower().strip()
-            row_set = {t.strip() for t in row_tags.split(",") if t.strip()}
-            match_count = len(required_tags.intersection(row_set))
-            if match_count > 0:
-                taste_match = True
-                taste_score = match_count * 0.15
-
-        foods_match = False
-        foods_score = 0
-        if has_foods:
-            food_tag = str(row.get("food_tags", "")).strip().lower()
-            
-            match_all = True
-            for food_keyword in required_foods:
-                if not re.search(rf'\b{re.escape(food_keyword)}\b', food_tag):
-                    match_all = False
-                    break
-            
-            if match_all:
-                foods_match = True
-                foods_score = 0.5
-
-        if has_foods and has_taste:
-            if foods_match and taste_match:
-                match_score += foods_score + taste_score
-            elif foods_match:
-                match_score += foods_score
-            elif taste_match:
-                match_score += taste_score * 0.5
-            else:
-                if not is_fallback:
-                    continue
-                match_score = min(match_score, 0.4)
-                
-        elif has_foods:
-            if not foods_match:
-                if not is_fallback:
-                    continue
-                match_score = min(match_score, 0.5)
-            else:
-                match_score += foods_score
-                
-        elif has_taste:
-            if not taste_match:
-                if not is_fallback:
-                    continue
-                match_score = min(match_score, 0.5)
-            else:
-                match_score += taste_score
-
-        if parsed_budget is not None:
-            min_price = parse_price(str(row.get("budget", "")))
-            if min_price is not None:
-                if min_price > parsed_budget:
-                    if not is_fallback:
-                        continue
-                    else:
-                        match_score = min(match_score, 0.5)
-
-        match_score = min(match_score, 1.5)
-        
-        row_dict = row.to_dict()
-        row_dict["match_score"] = match_score
-        filtered_data.append(row_dict)
-
-    filtered = pd.DataFrame(filtered_data)
-    if filtered.empty:
-        return filtered
-
-    if "distance_km" in filtered.columns:
-        filtered = filtered.sort_values(["match_score", "distance_km"], ascending=[False, True])
-    else:
-        filtered = filtered.sort_values("match_score", ascending=False)
-
-    return filtered
-
-def fallback_expand_search(full_df, original_location, taste=None, budget=None, foods=None,
-                           existing_results_df=None, min_results=5, current_time=None):
-
-    if existing_results_df is None:
-        existing_results_df = pd.DataFrame()
-
-    current_count = len(existing_results_df)
-    if current_count >= min_results:
-        return existing_results_df
-
-    need = min_results - current_count
+    print(f"🤖 [AI FAST] Check '{food_query}' ({len(restaurants)} quán)...")
 
     try:
-        root_lat, root_lon = geocode_location(original_location)
-    except:
-        return existing_results_df
-
-    df_open = full_df.copy()
-    open_status = df_open["open_hours"].apply(lambda t: is_open(t, current_time))
-    df_open["is_open"] = [x[0] for x in open_status]
-    df_open["minutes_left"] = [x[1] for x in open_status]
-    df_open = df_open[(df_open["is_open"]) & (df_open["minutes_left"] >= 30)]
-
-    if df_open.empty:
-        return existing_results_df
-
-    if not existing_results_df.empty:
-        used = set(existing_results_df["id"])
-        df_open = df_open[~df_open["id"].isin(used)]
-
-    if df_open.empty:
-        return existing_results_df
-
-    candidates = df_open.copy()
-    
-    required_foods = None
-    has_foods = False
-    
-    if foods is not None and foods != "None" and foods != "none":
-        if isinstance(foods, str):
-            clean = str(foods).strip()
-            if clean and clean.lower() != "none":
-                required_foods = [clean.lower()]
-                has_foods = True
-        elif isinstance(foods, list):
-            cleaned_list = [str(f).strip().lower() for f in foods 
-                          if f and str(f).strip().lower() != "none"]
-            if cleaned_list:
-                required_foods = cleaned_list
-                has_foods = True
-
-    candidates = df_open.copy()
-    
-    if has_foods and required_foods:
-        food_matches = []
-        for _, row in candidates.iterrows():
-            food_tag = str(row.get("food_tags", "")).strip().lower()
-            
-            match_all = True
-            for food_keyword in required_foods:
-                if not re.search(rf'\b{re.escape(food_keyword)}\b', food_tag):
-                    match_all = False
-                    break
-            
-            food_matches.append(match_all)
+        genai.configure(api_key=api_key)
+        model = genai.GenerativeModel(MODEL_NAME)
         
-        candidates = candidates[food_matches]
-
-    parsed_budget = parse_price(budget)
-
-    def compute_dist(coord_str):
-        try:
-            lat, lon = map(float, coord_str.split(","))
-            return haversine(root_lat, root_lon, lat, lon)
-        except:
-            return float("inf")
-
-    candidates["distance_km"] = candidates["coordinates"].apply(compute_dist)
-    candidates["match_score"] = 0.5
-
-    candidates["rating"] = pd.to_numeric(candidates["rating"], errors="coerce")
-    candidates = candidates.sort_values(
-        ["rating", "distance_km"],
-        ascending=[False, True]
-    )
-
-    to_add = candidates.head(need).copy()
-
-    final = pd.concat([existing_results_df, to_add], ignore_index=True)
-    return final
-
-def filter_and_split_restaurants(full_df, location, taste=None, budget=None, 
-                                 foods=None, current_time=None, min_results=5):
-    if current_time is None:
-        current_time = datetime.now().strftime("%H:%M")
-    
-    main_results = prefilter(full_df, location=location, current_time=current_time)
-    main_results = postfilter(
-        main_results,
-        taste=taste,
-        budget=budget,
-        foods=foods,
-        original_location=location,
-        is_fallback=False
-    )
-    
-    if not main_results.empty:
-        main_results["rating"] = pd.to_numeric(main_results["rating"], errors="coerce")
-        main_results = main_results.sort_values(
-            ["match_score", "rating", "distance_km"],
-            ascending=[False, False, True]
+        # 2. PROMPT "QUÂN ĐỘI" (Ngắn, Lệnh trực tiếp, Không văn hoa)
+        # Bỏ hết mấy câu "Bạn là chuyên gia...", "Hãy giúp tôi..."
+        prompt = f"""
+        Lọc danh sách quán khớp với món: "{food_query}".
+        
+        QUY TẮC BẮT BUỘC:
+        1. Giữ lại: Quán bán món ăn liên quan hoặc đúng loại hình.
+        2. LOẠI BỎ: 
+           - Địa điểm phi thực phẩm (ATM, Shop, Cây cảnh, Tiệm thuốc).
+           - Sai ngữ nghĩa (VD: tìm "cay" -> BỎ "Cây", "Cày", "Cầy").
+        
+        DATA: {json.dumps(input_list, ensure_ascii=False)}
+        
+        OUTPUT JSON ONLY: {{"ids": [list_of_valid_ids]}}
+        """
+        
+        # 3. Config tối ưu tốc độ: Temperature = 0 (AI trả lời như cái máy, không sáng tạo)
+        response = model.generate_content(
+            prompt, 
+            generation_config={
+                "response_mime_type": "application/json",
+                "temperature": 0.0 # QUAN TRỌNG: Giúp phản hồi nhanh và ổn định nhất
+            }
         )
+        
+        result_json = json.loads(response.text)
+        valid_indices = result_json.get('ids', [])
+        
+        filtered = [restaurants[i] for i in valid_indices if i < len(restaurants)]
+        print(f"   ⚡ AI chốt: {len(filtered)}/{len(restaurants)} quán.")
+        return filtered
 
-    main_count = len(main_results)
-    
-    if main_count >= min_results:
-        main_list = main_results.head(min_results).to_dict('records')
-        supplementary_list = []
-        return main_list, supplementary_list
-    
-    final_results = fallback_expand_search(
-        full_df=full_df,
-        original_location=location,
-        taste=taste,
-        budget=budget,
-        foods=foods,
-        existing_results_df=main_results,
-        min_results=min_results,
-        current_time=current_time
-    )
+    except Exception as e:
+        print(f"   ⚠️ AI Skip: {e}") 
+        return restaurants
 
-    if not final_results.empty:
-        final_results["rating"] = pd.to_numeric(final_results["rating"], errors="coerce")
-        final_results = final_results.sort_values(
-            ["match_score", "rating", "distance_km"],
-            ascending=[False, False, True]
-        )
-    
-    main_list = main_results.to_dict('records')
-    
-    if len(final_results) > main_count:
-        supplementary_results = final_results.iloc[main_count:]
-        supplementary_list = supplementary_results.to_dict('records')
+def prefilter(local_results, location=None, foods=None, current_day=None, current_time=None, api_key=None):
+    print(f"\n🔍 PIPELINE START (Input: {len(local_results)} quán)")
+    current_results = local_results
+
+    # ===== STEP 1: LOCATION FILTER =====
+    if location:
+        print(f"📍 [STEP 1] Location Filter: '{location}'")
+        location_filtered = []
+        loc_lower = location.lower().strip()
+        
+        # A. Check Quận Số (VD: Quận 1, Q.3) - ĐÃ FIX LOGIC
+        is_numeric_search = False
+        target_num = None
+        
+        # Tìm pattern chính xác: quận/q/q./district + số
+        district_match = re.search(r'\b(quận|q\.|q|district)\s*(\d+)\b', loc_lower)
+        
+        if district_match:
+            _, target_num = district_match.groups()
+            # Pattern chính xác để tránh match nhầm (ví dụ: Quận 1 vs Quận 10)
+            pattern = rf"\b(quận|q\.|q|district)\s*0?{target_num}\b"
+            is_numeric_search = True
+            print(f"   ℹ️ Mode: Quận Số -> Tìm Q.{target_num}")
+        else:
+            # B. Mode Đa Từ Khóa (Tên Riêng)
+            parts = re.split(r'[,;]\s*', loc_lower)
+            keywords = []
+            stopwords = ["thành phố", "tỉnh", "việt nam", "vietnam", "vn", "quận", "huyện", "thị xã", "phường", "xã", "tp.", "tt."]
+            
+            for part in parts:
+                clean_part = part
+                for sw in stopwords:
+                    clean_part = clean_part.replace(sw, " ")
+                core_word = " ".join(clean_part.split())
+                if len(core_word) > 1: 
+                    keywords.append(core_word)
+            
+            if not keywords: keywords = [loc_lower]
+            print(f"   ℹ️ Mode: Đa Từ Khóa -> {keywords}")
+
+        # C. Lọc
+        for r in current_results:
+            full_info = (str(r.get('address', '')) + " " + str(r.get('title', ''))).lower()
+            match = False
+            
+            if is_numeric_search:
+                if re.search(pattern, full_info): match = True
+            else:
+                # Logic AND: Phải chứa TẤT CẢ keywords
+                match_all = True
+                for kw in keywords:
+                    if kw not in full_info:
+                        match_all = False
+                        break
+                if match_all: 
+                    match = True
+                else:
+                    # Nếu AND thất bại, thử vớt vát bằng keyword đầu tiên (quan trọng nhất)
+                    # NHƯNG: Chỉ áp dụng nếu keyword đầu tiên đủ dài (>3 ký tự) để tránh rác
+                    if len(keywords) > 1 and len(keywords[0]) > 3:
+                         if keywords[0] in full_info:
+                             match = True # Vớt vát (Relaxed)
+
+            if match:
+                location_filtered.append(r)
+        
+        # D. KẾT QUẢ (STRICT MODE - KHÔNG FALLBACK)
+        if not location_filtered:
+            print(f"⚠️ Không tìm thấy quán nào đúng địa chỉ yêu cầu.")
+            # return [] # <-- Trả về rỗng để báo "Không tìm thấy"
+            # TUY NHIÊN: Để tránh màn hình trắng xóa nếu Google chỉ lệch 1 xíu
+            # Ta có thể check xem có phải do Zoom quá xa không?
+            # Nếu input có "Vĩnh Long" mà kết quả toàn "Cần Thơ" -> Chắc chắn sai -> Return Rỗng.
+            return [] 
+        else:
+            print(f"   ✅ Khớp Location: {len(location_filtered)}/{len(current_results)} quán.")
+            current_results = location_filtered
+
     else:
-        supplementary_list = []
+        print("⏩ Bỏ qua Location.")
+
+
+    # ===== STEP 2: TIME FILTER =====
+    if current_results:
+        # Gọi hàm mới (chỉ gắn nhãn chứ không lọc bỏ)
+        processed_results = filter_open_restaurants(current_results, check_time=current_time, check_day=current_day)
+        
+        if processed_results:
+            current_results = processed_results # <-- GIỮ LẠI TẤT CẢ kết quả (Mở và Đóng)
+            open_count = sum(1 for r in current_results if r.get('is_currently_open'))
+            print(f"   ✅ Đã gắn nhãn trạng thái mở cửa cho {len(current_results)} quán.")
+            # KHÔNG RETURN NỮA, để các quán đóng đi tiếp qua Food Filter và Sorting
+        else:
+            print("   ❌ Không có quán nào (Lỗi hệ thống).")
+            return [] # Trả về rỗng nếu có lỗi xảy ra
+
+    # ===== STEP 3: FOOD FILTER =====
+    if foods and api_key and current_results:
+        current_results = ai_check_food_relevance_batch(current_results, foods, api_key)        
     
-    return main_list, supplementary_list
+    return current_results
+
+def postfilter(filtered_results, budget=None):
+    if not filtered_results: return []
+    if not budget: return filtered_results
+    
+    print(f"💰 [STEP 4] Budget Filter: <= '{budget}'")
+    user_max_budget = parse_price(budget) or 100000
+    budget_filtered = []
+
+    for r in filtered_results:
+        price_str = str(r.get('price', ''))
+        r_price = parse_price(price_str)
+        est_price = r_price if r_price else 50000 
+        
+        if est_price <= user_max_budget:
+            r['estimated_price'] = est_price
+            budget_filtered.append(r)
+            
+    print(f"   ✅ Đúng túi tiền: {len(budget_filtered)} quán.")
+    return budget_filtered
+
+def filter_and_split_restaurants(full_places_data, location=None, budget=None, foods=None, current_day=None, current_time=None, api_key=None):
+    main = prefilter(full_places_data, location, foods, current_day, current_time, api_key)
+    return postfilter(main, budget)
