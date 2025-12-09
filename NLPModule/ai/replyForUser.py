@@ -1,5 +1,5 @@
 from .client import generate_response
-from NLPModule.promptBuilder import buildReplyForUserPrompt
+from .promptBuilder import buildReplyForUserPrompt
 
 def replyForUser(data: dict):
     prompt = buildReplyForUserPrompt(data)

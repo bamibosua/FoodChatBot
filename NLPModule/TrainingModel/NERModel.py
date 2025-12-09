@@ -8,14 +8,37 @@ from spacy.util import minibatch
 def load_train_data(path):
     data = []
     with open(path, "r", encoding="utf8") as f:
-        for line in f:
-            item = json.loads(line.strip())
-            text = item["text"].lower()
-            entities = item["entities"]
-            data.append((text, {"entities": entities}))
+        for line_no, line in enumerate(f, start=1):
+            line = line.strip()
+            if not line:
+                print(f"Dòng {line_no} rỗng → bỏ qua")
+                continue
+
+            try:
+                item = json.loads(line)
+            except json.JSONDecodeError:
+                print(f"JSON lỗi ở dòng {line_no}: {line}")
+                continue
+
+            # item phải là list có 2 phần tử
+            if not isinstance(item, list) or len(item) != 2:
+                print(f"Sai format ở dòng {line_no}: {item}")
+                continue
+
+            text, ann = item
+
+            if not isinstance(text, str):
+                print(f"Text không phải string ở dòng {line_no}")
+                continue
+
+            if not isinstance(ann, dict) or "entities" not in ann:
+                print(f"Annotation sai format ở dòng {line_no}")
+                continue
+
+            data.append((text.lower(), {"entities": ann["entities"]}))
     return data
 
-train_data = load_train_data("train_data.jsonl")
+train_data = load_train_data("train_datas.jsonl")
 
 nlp = spacy.load("en_core_web_md")
 
@@ -270,20 +293,40 @@ for text, annot in train_data:
 
 other_pipes = [p for p in nlp.pipe_names if p != "ner"]
 
+patience = 5
+no_improve_epochs = 0
+best_loss = float("inf")
+
 with nlp.disable_pipes(*other_pipes):
     optimizer = nlp.resume_training()
-    n_iter = 210
+    n_iter = 100
+
     for epoch in range(n_iter):
         random.shuffle(train_data)
         losses = {}
         batches = minibatch(train_data, size=4)
+
         for batch in batches:
             examples = []
             for text, annotations in batch:
                 doc = nlp.make_doc(text)
                 examples.append(Example.from_dict(doc, annotations))
             nlp.update(examples, drop=0.2, sgd=optimizer, losses=losses)
-        print(f"Epoch {epoch+1}/{n_iter} - Losses: {losses}")
+
+        current_loss = losses.get("ner", sum(losses.values()))
+        print(f"Epoch {epoch+1}/{n_iter} - Loss: {current_loss}")
+
+        # --- EARLY STOPPING ---
+        if current_loss < best_loss:
+            best_loss = current_loss
+            no_improve_epochs = 0
+        else:
+            no_improve_epochs += 1
+            print(f"➡️  No improvement for {no_improve_epochs} epoch(s)")
+
+        if no_improve_epochs >= patience:
+            print("🛑 Early stopping triggered!")
+            break
 
 nlp.to_disk("../custom_ner_model")
 print("Model saved to 'custom_ner_model'")

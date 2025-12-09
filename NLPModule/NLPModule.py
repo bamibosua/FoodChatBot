@@ -16,6 +16,8 @@ def analyzeUserInput(userInput: str):
     if original_lang != 'en':
         fixedInput = translate_text(fixedInput, 'en')
 
+    print(f"DEBUG: {fixedInput}")
+          
     rawExtraction = nerExtractor(fixedInput)
     normalized = normalizeFields(rawExtraction)
 
@@ -34,3 +36,5 @@ def reply(data: dict, original_lang):
         answer_translated = translate_text(answer, dest_lang=original_lang)
         return answer_translated
     return answer
+
+

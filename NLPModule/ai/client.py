@@ -3,7 +3,7 @@ import os
 
 MODEL = "gemini-2.5-flash"
 
-API_KEY = os.getenv("GEMINI_API_KEY", "AIzaSyD3b52kkvCkB3wW78NzXOWCIspO_Mk6joI") 
+API_KEY = os.getenv("GEMINI_API_KEY", "AIzaSyAkwabifEBqvscpm5uq2UNNy33dFktworg") 
 genai.configure(api_key=API_KEY)
 
 def generate_response(prompt: str):

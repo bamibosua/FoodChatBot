@@ -1,21 +1,23 @@
+from Translator.translator import translate_text
+
 def normalizeFields(AIExtractor: dict):
     location = AIExtractor.get("location")
-    taste = AIExtractor.get("tasteAndFood")
+    # taste = AIExtractor.get("tasteAndFood")
+    foods = AIExtractor.get("foods")
     budget = AIExtractor.get("budget_raw")
-    food = AIExtractor.get("food")
     city = AIExtractor.get("city")
 
     if location in ("null", "", None): location = None
+    # if not isinstance(taste, list): taste = []
+    if not isinstance(foods, list): foods = []
     if budget in ("null", "", None): budget = None
-    if not isinstance (food, list): food = []
     if city in ("null", "", None): city = "hcm"
-    if not isinstance(taste, list): taste = []
-    print(f'DEBUG: {city} | {budget} | {location} | {taste}')
+
+    print(f'DEBUG: {city} | {budget} | {location} | {foods}')
     
     return {
-        "location": location,
-        "taste": taste,
+        "location": translate_text(location, 'vi'),
+        "city": translate_text(city, 'vi'),
+        "foods": translate_text(foods, 'vi'),
         "budget": budget,
-        "foods": food,
-        "city": city
     }
