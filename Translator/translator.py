@@ -1,13 +1,25 @@
-# Translator/translator.py
 from deep_translator import GoogleTranslator
-from googletrans import Translator
+from lingua import LanguageDetectorBuilder
+from lingua import Language
 
-translator = Translator()
+# Tạo detector
+_detector = LanguageDetectorBuilder.from_all_languages().build()
+
 def detect_language(text: str) -> str:
-    try:
-        return translator.detect(text).lang
-    except:
-        return 'en'
+    """
+    Detect ngôn ngữ của đoạn text đầu vào.
+    """
+    lang = _detector.detect_language_of(text)
+    if lang is None:
+        return "unknown"
+
+    # Có ngôn ngữ không có mã → fallback
+    iso = lang.iso_code_639_1
+    if iso is None:
+        return "unknown"
+
+    return iso.name.lower()
+
 def get_original_language(text: str) -> str:
     return detect_language(text)
 
@@ -15,10 +27,7 @@ def translate_text(text: str, dest_lang: str) -> str:
     """
     Translate text to destination language.
     """
-    translator = Translator()
     try:
-        result = translator.translate(text, dest=dest_lang)
-        return result.text
+        return GoogleTranslator(source='auto', target=dest_lang).translate(text)
     except Exception:
         return text  # fallback
-    
