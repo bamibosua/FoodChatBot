@@ -15,8 +15,10 @@ def translate_text(text: str, dest_lang: str) -> str:
     """
     Translate text to destination language.
     """
+    translator = Translator()
     try:
-        return GoogleTranslator(source='auto', target=dest_lang).translate(text)
+        result = translator.translate(text, dest=dest_lang)
+        return result.text
     except Exception:
         return text  # fallback
     
