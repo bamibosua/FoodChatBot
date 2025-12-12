@@ -14,22 +14,11 @@ def render_sidebar():
         # Header với user info
         apply_header_sidebar_styles()
         # Action buttons
-        col1, col2 = st.columns(2)
-        with col1:
-            if st.button("Load Chats", use_container_width=True, help="Load chats"):
-                loaded_chats = load_chat_history_from_file(st.session_state.username)
-                if loaded_chats:
-                    st.session_state.all_chats = loaded_chats
-                    st.toast(f"Loaded {len(loaded_chats)} chats!")
-                st.rerun()
-        with col2:
-            if st.button("Log out", use_container_width=True, help="Logout"):
-                save_current_chat()
-                st.session_state.logged_in = False
-                st.session_state.username = ""
-                st.rerun()
-
-        st.markdown("---")
+        if st.button("Log out", use_container_width=True, help="Logout"):
+            save_current_chat()
+            st.session_state.logged_in = False
+            st.session_state.username = ""
+            st.rerun()
 
         # Map toggle
         if st.checkbox("🗺 Show Map", value=st.session_state.get('show_map_sidebar', False)):
@@ -37,16 +26,8 @@ def render_sidebar():
         else:
             st.session_state.show_map_sidebar = False
 
-        st.markdown("---")
-
-        # Statistics
-        col1, col2 = st.columns(2)
-        with col1:
-            st.metric("Chats", len(st.session_state.get('all_chats', {})))
-        with col2:
-            st.metric("Favorites", len(st.session_state.get('favorites', [])))
-
-        st.markdown("---")
+        # Metrics
+        st.metric("Chats", len(st.session_state.get('all_chats', {})))
 
         # NEW CHAT SECTION - Always visible at top
         st.markdown("### 💬 New Chat")
@@ -185,71 +166,3 @@ def render_sidebar():
                     st.rerun()
             else:
                 st.info("No chats yet. Start chatting!")
-
-        # # FAVORITES SECTION - Màu vàng nhẹ nhàng hơn
-        # with st.expander("Favorites", expanded=False):
-        #     if st.session_state.get('favorites'):
-        #         for chat_id in st.session_state.favorites:
-        #             if chat_id in st.session_state.get('all_chats', {}):
-        #                 data = st.session_state.all_chats[chat_id]
-        #                 title = data.get("title", chat_id)
-                        
-        #                 st.markdown(f"""
-        #                 <div style="background-color: #fffde7; padding: 10px; 
-        #                             border-radius: 8px; margin-bottom: 8px; border-left: 3px solid #fbc02d;
-        #                             transition: all 0.2s ease;">
-        #                     <b style="color: #f57f17;">⭐ {title[:35]}</b><br>
-        #                     <small style="color: #757575;">{data.get('timestamp', '')}</small>
-        #                 </div>
-        #                 """, unsafe_allow_html=True)
-                        
-        #                 col1, col2 = st.columns(2)
-        #                 with col1:
-        #                     if st.button("Load", key=f"fav_load_{chat_id}", use_container_width=True):
-        #                         save_current_chat()
-        #                         st.session_state.current_chat_id = chat_id
-        #                         st.session_state.history = data["history"].copy()
-        #                         st.session_state.conversation_history = initialize_conversation(st.session_state.current_chat_id, st.session_state.username   )
-        #                         st.rerun()
-        #                 with col2:
-        #                     if st.button("Remove", key=f"fav_rem_{chat_id}", use_container_width=True):
-        #                         st.session_state.favorites.remove(chat_id)
-        #                         st.rerun()
-                
-        #         if st.button("Clear All Favorites", use_container_width=True):
-        #             st.session_state.favorites = []
-        #             st.rerun()
-        #     else:
-        #         st.info("No favorites yet!")
-
-        # SETTINGS SECTION - Màu xanh lá nhẹ nhàng
-        with st.expander("Settings", expanded=False):
-            st.markdown("**Theme**")
-            theme = st.selectbox("", ["Light Yellow", "Blue", "Green", "Orange", "Pink", "Purple"], label_visibility="collapsed")
-            
-            st.markdown("**Display**")
-            max_msgs = st.slider("Max messages", 10, 100, 50)
-            auto_save = st.checkbox("Auto-save", value=True)
-            
-            st.markdown("**Data**")
-            st.caption(f"File: chat_history_{st.session_state.username}.json")
-            
-            col1, col2 = st.columns(2)
-            with col1:
-                if st.button("Export", use_container_width=True):
-                    save_chat_history_to_file(st.session_state.username, st.session_state.all_chats)
-                    st.toast("Exported!")
-            with col2:
-                if st.button("Import", use_container_width=True):
-                    loaded = load_chat_history_from_file(st.session_state.username)
-                    if loaded:
-                        st.session_state.all_chats = loaded
-                        st.toast("Imported!")
-                        st.rerun()
-            
-            if st.button("Save Settings", use_container_width=True, type="primary"):
-                st.session_state.theme = theme
-                st.session_state.max_messages = max_msgs
-                st.session_state.auto_save = auto_save
-                st.toast("Settings saved!") 
-    return None

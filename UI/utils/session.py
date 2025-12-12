@@ -1,5 +1,5 @@
 # utils/session.py
-import streamlit as st
+import streamlit as st    
 
 def initialize_session_state():
     defaults = {
@@ -12,6 +12,7 @@ def initialize_session_state():
         "chat_titles": {},
         "show_settings": False,
         "logged_in": False,
+        "show_forgot": False,
         "username": "",
         "show_map_sidebar": True,
         "route_start": "District 2, Ho Chi Minh city, Viet Nam",
