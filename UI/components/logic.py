@@ -7,11 +7,8 @@ def parse_user_input(user_input):
     intent = userIntentClassification(user_input)
     original_lang = get_original_language(user_input)
     if intent == "NotFood":
-        not_food_message = (
-            "Xin lỗi, tôi chỉ hỗ trợ tìm kiếm quán ăn. Bạn có thể hỏi tôi về món ăn, nhà hàng hoặc quán ăn bạn muốn tìm."
-            if original_lang == "vi"
-            else "Sorry, I only support finding restaurants and food. You can ask me about dishes, restaurants or places to eat you're looking for."
-        )
+        messages = "Sorry, I only support finding restaurants and food. You can ask me about dishes, restaurants or places to eat you're looking for."
+        not_food_message = translate_text(messages, original_lang)
         return {"intent": "NotFood", "message": not_food_message}, original_lang
     
     parsed = analyzeUserInput(user_input)
