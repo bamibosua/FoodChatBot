@@ -16,7 +16,7 @@ def apply_main_styles():
             
             /* Sidebar styling */
             [data-testid="stSidebar"] {
-                background: linear-gradient(180deg, #1e3c72 0%, #2a5298 100%);
+                background: #807F7C;
                 color: #ecf0f1;
                 padding: 20px;
                 border-top-right-radius: 20px;
@@ -25,13 +25,13 @@ def apply_main_styles():
             }
             
             [data-testid="stSidebar"] [data-testid="stMarkdownContainer"] {
-                color: #ecf0f1 !important;
+                color: black!important;
             }
             
             /* Sidebar buttons */
             [data-testid="stSidebar"] button {
-                background-color: rgba(255, 255, 255, 0.1) !important;
-                color: white !important;
+                background-color: #807F7C;
+                color: black!important;
                 border-radius: 10px !important;
                 margin: 5px 0;
                 padding: 8px 12px;
@@ -41,26 +41,38 @@ def apply_main_styles():
             }
             
             [data-testid="stSidebar"] button:hover {
-                background-color: rgba(255, 255, 255, 0.2) !important;
+                background-color: #807F7C;
                 transform: translateX(2px);
             }
-            
             /* Chat message styling */
             [data-testid="stChatMessage"] {
-                background-color: rgba(255, 255, 255, 0.95);
+                background-color: black;
                 border-radius: 15px;
                 padding: 15px;
                 margin: 10px 0;
                 box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
             }
             
+            .stForm {
+                background: white;
+                padding: 30px;
+                border-radius: 16px;
+                box-shadow: 0 10px 30px rgba(0, 48, 135, 0.15);
+                border: 1px solid #e0e0e0;
+            }
+            /* Input đẹp lung linh */
+            div[data-baseweb="input"] > div {
+                border-radius: 12px !important;
+                border: 2px solid #003087 !important;
+            }
+                    
             /* Button styling */
             .stButton button {
                 border-radius: 10px;
                 font-weight: 600;
                 transition: all 0.3s ease;
                 border: none;
-                background: linear-gradient(135deg, #f7971e 0%, #ffd200 100%);
+                background: #807F7C;
                 color: purple;
             }
             
@@ -87,10 +99,10 @@ def apply_main_styles():
             
             /* Custom headers */
             .custom-header {
-                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                background: #807F7C;
                 padding: 20px;
                 border-radius: 15px;
-                color: white;
+                color: wh;
                 text-align: center;
                 margin-bottom: 20px;
                 box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
@@ -125,13 +137,78 @@ def apply_sidebar_styles():
             <style>
                 [data-testid="stAppViewContainer"],
                 .stApp {
-                    background: linear-gradient(135deg, #fff176 0%, #6a1b9a 100%) !important;
+                    background: #F0EEE8;
                     background-attachment: fixed;
                 }
                 /* Tùy chọn: làm sidebar trong suốt hơn */
                 [data-testid="stSidebar"] {
-                    background: rgba(30, 60, 114, 0.95) !important;
+                    background: #A3A29E;
                     backdrop-filter: blur(10px);
                 }
+                [data-testid="stMetricValue"] {
+                    color: white !important; /* Đổi màu ở đây (Ví dụ: Màu đỏ Streamlit) */
+                    font-size: 40px;      /* Bạn cũng có thể chỉnh kích thước nếu muốn */
+                }      
+                 /* Chỉnh màu expander header */
+                 .streamlit-expanderHeader {
+                     background-color: black!important;
+                     border-radius: 8px !important;
+                     padding: 8px 12px !important;
+                     font-weight: 600 !important;
+                     color: #262730 !important;
+                 }
+
+                 /* Khi hover vào expander */
+                 .streamlit-expanderHeader:hover {
+                     background-color: black !important;
+                     color: #000000 !important;
+                 }
+
+                 /* Expander content */
+                 .streamlit-expanderContent {
+                     background-color: transparent !important;
+                     border: none !important;
+                 }    
             </style>
             """, unsafe_allow_html=True)
+
+def get_login_title_style():
+    """Style cho tiêu đề Login"""
+    return """
+        <h2 style= 
+            'text-align: center; 
+            color: black;
+            font-family: Times New Roman; 
+            margin-bottom: 30px'>Login</h2>
+    """
+
+def get_signup_title_style():
+    """Style cho tiêu đề Sign up"""
+    return """
+        <h2 style= 
+            'text-align: center; 
+            color: black;
+            font-family: Times New Roman; 
+            margin-bottom: 30px'>Sign up</h2>
+    """
+
+def get_forgot_password_title_style():
+    """Style cho tiêu đề Forgot Password"""
+    return """
+        <h2 style= 
+            'text-align : center; 
+            color: black;
+            font-family: Times New Roman, serif; 
+            margin: 0px'>Forgot Password</h2>
+    """
+
+def get_image_container_style(height="20px"):
+    """Style cho container chứa ảnh food"""
+    return f"""
+        <div style="
+            height: {height};
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        ">
+    """
