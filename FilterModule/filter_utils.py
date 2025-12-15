@@ -1,59 +1,58 @@
-import os
-import re
+# filter_utils.py
 import json
-import google.generativeai as genai
+from groq import Groq
 from .time_utils import filter_open_restaurants
-from .price_utils import parse_price
+from .price_utils import parse_price, parse_price_range
+from Utils.key_manager import get_keys, get_model_name 
 
+MODEL_NAME = get_model_name()
 
-# Dùng Flash là chuẩn bài cho tốc độ
-MODEL_NAME = "gemini-2.5-flash"
-
-def ai_check_food_relevance_batch(restaurants, food_query, api_key):
-    """
-    AI Filter tối ưu tốc độ (Low Latency).
-    """
-    if not food_query or not restaurants or not api_key: 
+# ------------------------------------------------------------------
+# 1. HÀM AI LỌC MÓN ĂN
+# ------------------------------------------------------------------
+def ai_check_food_relevance_batch(restaurants, food_query):
+    """Lọc danh sách nhà hàng theo món ăn bằng AI (Gọi trực tiếp)."""
+    if not food_query or not restaurants: 
         return restaurants
 
-    # 1. Rút gọn dữ liệu đầu vào tối đa (Chỉ gửi thông tin cần thiết)
-    input_list = [
-        {'id': i, 'n': r.get('title', ''), 't': r.get('types', [])} 
-        for i, r in enumerate(restaurants)
-    ]
+    # Rút gọn data gửi AI
+    input_list = [{'id': i, 'n': r.get('title', ''), 't': r.get('types', [])} 
+                  for i, r in enumerate(restaurants)]
     
-    print(f"🤖 [AI FAST] Check '{food_query}' ({len(restaurants)} quán)...")
+    print(f"🤖 [GROQ] Check '{food_query}' ({len(restaurants)} quán)...")
 
+    prompt = f"""
+    Lọc danh sách quán khớp với món: "{food_query}".
+    DATA: {json.dumps(input_list, ensure_ascii=False)}
+    OUTPUT JSON ONLY format: {{"ids": [list_of_valid_ids]}}
+    """
+    
     try:
-        genai.configure(api_key=api_key)
-        model = genai.GenerativeModel(MODEL_NAME)
-        
-        # 2. PROMPT "QUÂN ĐỘI" (Ngắn, Lệnh trực tiếp, Không văn hoa)
-        # Bỏ hết mấy câu "Bạn là chuyên gia...", "Hãy giúp tôi..."
-        prompt = f"""
-        Lọc danh sách quán khớp với món: "{food_query}".
-        
-        QUY TẮC BẮT BUỘC:
-        1. Giữ lại: Quán bán món ăn liên quan hoặc đúng loại hình.
-        2. LOẠI BỎ: 
-           - Địa điểm phi thực phẩm (ATM, Shop, Cây cảnh, Tiệm thuốc).
-           - Sai ngữ nghĩa (VD: tìm "cay" -> BỎ "Cây", "Cày", "Cầy").
-        
-        DATA: {json.dumps(input_list, ensure_ascii=False)}
-        
-        OUTPUT JSON ONLY: {{"ids": [list_of_valid_ids]}}
-        """
-        
-        # 3. Config tối ưu tốc độ: Temperature = 0 (AI trả lời như cái máy, không sáng tạo)
-        response = model.generate_content(
-            prompt, 
-            generation_config={
-                "response_mime_type": "application/json",
-                "temperature": 0.0 # QUAN TRỌNG: Giúp phản hồi nhanh và ổn định nhất
-            }
+        keys = get_keys()
+        if not keys:
+            print("   ❌ Lỗi: Không có API Key.")
+            return restaurants
+
+        # Gọi trực tiếp Groq tại đây
+        client = Groq(api_key=keys[0])
+        chat_completion = client.chat.completions.create(
+            messages=[
+                {
+                    "role": "system",
+                    "content": "You are a helpful assistant that outputs valid JSON only."
+                },
+                {
+                    "role": "user",
+                    "content": prompt,
+                }
+            ],
+            model=MODEL_NAME,
+            temperature=0.0,
+            response_format={"type": "json_object"}
         )
         
-        result_json = json.loads(response.text)
+        result_text = chat_completion.choices[0].message.content
+        result_json = json.loads(result_text)
         valid_indices = result_json.get('ids', [])
         
         filtered = [restaurants[i] for i in valid_indices if i < len(restaurants)]
@@ -61,131 +60,94 @@ def ai_check_food_relevance_batch(restaurants, food_query, api_key):
         return filtered
 
     except Exception as e:
-        print(f"   ⚠️ AI Skip: {e}") 
+        print(f"   ⚠️ Lỗi AI hoặc parse JSON: {e}")
         return restaurants
 
-def prefilter(local_results, location=None, foods=None, current_day=None, current_time=None, api_key=None):
+# ------------------------------------------------------------------
+# 2. PRE-FILTER (Lọc Địa điểm, Thời gian, Món ăn)
+# ------------------------------------------------------------------
+def prefilter(local_results, location=None, foods=None, current_day=None, current_time=None):
+    """
+    Pipeline lọc dữ liệu (Bỏ qua Location -> Time -> Food).
+    """
     print(f"\n🔍 PIPELINE START (Input: {len(local_results)} quán)")
     current_results = local_results
 
-    # ===== STEP 1: LOCATION FILTER =====
+    # ===== STEP 1: LOCATION FILTER (ĐÃ VÔ HIỆU HÓA) =====
+    # Logic cũ đã được bỏ qua để giữ lại toàn bộ kết quả từ Google Maps
     if location:
         print(f"📍 [STEP 1] Location Filter: '{location}'")
-        location_filtered = []
-        loc_lower = location.lower().strip()
-        
-        # A. Check Quận Số (VD: Quận 1, Q.3) - ĐÃ FIX LOGIC
-        is_numeric_search = False
-        target_num = None
-        
-        # Tìm pattern chính xác: quận/q/q./district + số
-        district_match = re.search(r'\b(quận|q\.|q|district)\s*(\d+)\b', loc_lower)
-        
-        if district_match:
-            _, target_num = district_match.groups()
-            # Pattern chính xác để tránh match nhầm (ví dụ: Quận 1 vs Quận 10)
-            pattern = rf"\b(quận|q\.|q|district)\s*0?{target_num}\b"
-            is_numeric_search = True
-            print(f"   ℹ️ Mode: Quận Số -> Tìm Q.{target_num}")
-        else:
-            # B. Mode Đa Từ Khóa (Tên Riêng)
-            parts = re.split(r'[,;]\s*', loc_lower)
-            keywords = []
-            stopwords = ["thành phố", "tỉnh", "việt nam", "vietnam", "vn", "quận", "huyện", "thị xã", "phường", "xã", "tp.", "tt."]
-            
-            for part in parts:
-                clean_part = part
-                for sw in stopwords:
-                    clean_part = clean_part.replace(sw, " ")
-                core_word = " ".join(clean_part.split())
-                if len(core_word) > 1: 
-                    keywords.append(core_word)
-            
-            if not keywords: keywords = [loc_lower]
-            print(f"   ℹ️ Mode: Đa Từ Khóa -> {keywords}")
-
-        # C. Lọc
-        for r in current_results:
-            full_info = (str(r.get('address', '')) + " " + str(r.get('title', ''))).lower()
-            match = False
-            
-            if is_numeric_search:
-                if re.search(pattern, full_info): match = True
-            else:
-                # Logic AND: Phải chứa TẤT CẢ keywords
-                match_all = True
-                for kw in keywords:
-                    if kw not in full_info:
-                        match_all = False
-                        break
-                if match_all: 
-                    match = True
-                else:
-                    # Nếu AND thất bại, thử vớt vát bằng keyword đầu tiên (quan trọng nhất)
-                    # NHƯNG: Chỉ áp dụng nếu keyword đầu tiên đủ dài (>3 ký tự) để tránh rác
-                    if len(keywords) > 1 and len(keywords[0]) > 3:
-                         if keywords[0] in full_info:
-                             match = True # Vớt vát (Relaxed)
-
-            if match:
-                location_filtered.append(r)
-        
-        # D. KẾT QUẢ (STRICT MODE - KHÔNG FALLBACK)
-        if not location_filtered:
-            print(f"⚠️ Không tìm thấy quán nào đúng địa chỉ yêu cầu.")
-            # return [] # <-- Trả về rỗng để báo "Không tìm thấy"
-            # TUY NHIÊN: Để tránh màn hình trắng xóa nếu Google chỉ lệch 1 xíu
-            # Ta có thể check xem có phải do Zoom quá xa không?
-            # Nếu input có "Vĩnh Long" mà kết quả toàn "Cần Thơ" -> Chắc chắn sai -> Return Rỗng.
-            return [] 
-        else:
-            print(f"   ✅ Khớp Location: {len(location_filtered)}/{len(current_results)} quán.")
-            current_results = location_filtered
-
+        print(f"   ⏩ ĐÃ TẮT LỌC LOCATION (Giữ nguyên {len(current_results)} quán từ Google Maps).")
     else:
-        print("⏩ Bỏ qua Location.")
+        print("⏩ Bỏ qua Location (Không có input).")
 
-
-    # ===== STEP 2: TIME FILTER =====
+    # ===== STEP 2: TIME FILTER (Kiểm tra trạng thái mở cửa) =====
     if current_results:
-        # Gọi hàm mới (chỉ gắn nhãn chứ không lọc bỏ)
-        processed_results = filter_open_restaurants(current_results, check_time=current_time, check_day=current_day)
-        
+        print(f"⏰ [STEP 2] Time Filter (Check: {current_day} {current_time})")
+        processed_results = filter_open_restaurants(
+            current_results, 
+            check_time=current_time, 
+            check_day=current_day
+        )
         if processed_results:
-            current_results = processed_results # <-- GIỮ LẠI TẤT CẢ kết quả (Mở và Đóng)
+            current_results = processed_results 
             open_count = sum(1 for r in current_results if r.get('is_currently_open'))
-            print(f"   ✅ Đã gắn nhãn trạng thái mở cửa cho {len(current_results)} quán.")
-            # KHÔNG RETURN NỮA, để các quán đóng đi tiếp qua Food Filter và Sorting
+            print(f"   ✅ Có {open_count}/{len(current_results)} quán đang mở cửa.")
         else:
             print("   ❌ Không có quán nào (Lỗi hệ thống).")
-            return [] # Trả về rỗng nếu có lỗi xảy ra
+            return []
 
-    # ===== STEP 3: FOOD FILTER =====
-    if foods and api_key and current_results:
-        current_results = ai_check_food_relevance_batch(current_results, foods, api_key)        
+    # ===== STEP 3: FOOD FILTER (Lọc theo món ăn bằng AI) =====
+    if foods and current_results:
+        current_results = ai_check_food_relevance_batch(current_results, foods)        
     
     return current_results
 
+# ------------------------------------------------------------------
+# 3. POST-FILTER (Lọc giá)
+# ------------------------------------------------------------------
 def postfilter(filtered_results, budget=None):
     if not filtered_results: return []
     if not budget: return filtered_results
     
-    print(f"💰 [STEP 4] Budget Filter: <= '{budget}'")
-    user_max_budget = parse_price(budget) or 100000
+    # User nhập "50k" -> budget_val = 50000
+    budget_val = parse_price(budget)
+    if not budget_val: return filtered_results
+
+    print(f"💰 [STEP 3] Budget Filter: Check if {budget_val} inside Restaurant Range")
+    
     budget_filtered = []
 
     for r in filtered_results:
         price_str = str(r.get('price', ''))
-        r_price = parse_price(price_str)
-        est_price = r_price if r_price else 50000 
         
-        if est_price <= user_max_budget:
-            r['estimated_price'] = est_price
+        # Lấy khoảng giá của quán: (min_q, max_q)
+        r_range = parse_price_range(price_str)
+        
+        # CASE 1: Quán không có giá -> Giữ lại (Unknown)
+        if not r_range:
+            r['estimated_price'] = "Unknown"
+            budget_filtered.append(r)
+            continue
+            
+        min_q, max_q = r_range
+        
+        # CASE 2: Logic user yêu cầu: Min_Quan <= Budget <= Max_Quan
+        # Lưu ý: Thêm buffer 10% cho Max để đỡ bị sót nếu lố xíu (tùy ông)
+        # Ví dụ: Quán 20k-55k, User 50k -> 20 <= 50 <= 55 (OK)
+        if min_q <= budget_val <= (max_q * 1.1):
+            r['estimated_price'] = f"{min_q}-{max_q}"
             budget_filtered.append(r)
             
-    print(f"   ✅ Đúng túi tiền: {len(budget_filtered)} quán.")
+    print(f"   ✅ Đúng tầm giá: {len(budget_filtered)} quán.")
     return budget_filtered
 
-def filter_and_split_restaurants(full_places_data, location=None, budget=None, foods=None, current_day=None, current_time=None, api_key=None):
-    main = prefilter(full_places_data, location, foods, current_day, current_time, api_key)
+# ------------------------------------------------------------------
+# 4. MAIN FUNCTION (Kết hợp pre/post filter)
+# ------------------------------------------------------------------
+def filter_and_split_restaurants(full_places_data, location=None, budget=None, foods=None, current_day=None, current_time=None):
+    """
+    Chạy toàn bộ pipeline lọc: Location, Time, Food, Budget.
+    """
+    main = prefilter(full_places_data, location, foods, current_day, current_time)
     return postfilter(main, budget)

@@ -72,9 +72,8 @@ class TestSuite100Cases(unittest.TestCase):
     def test_040_range_overnight_in_am(self): self.assertTrue(is_time_in_range(time(1,0), time(22,0), time(2,0)))
 
     # =========================================================================
-    # PHẦN 3: TIME UTILS - LOGIC MỞ CỬA & 30 PHÚT (20 Cases)
+    # PHẦN 3: TIME UTILS - LOGIC MỞ CỬA & BỎ QUA 30 PHÚT (16 Cases)
     # =========================================================================
-    # Logic của bạn: CÒN <= 30 PHÚT LÀ ĐÓNG (Return False)
     
     def test_041_status_no_data(self):
         """Không có operating_hours -> Mặc định True"""
@@ -98,7 +97,7 @@ class TestSuite100Cases(unittest.TestCase):
         r = {'operating_hours': {'thứ hai': '08:00–22:00'}}
         self.assertTrue(is_restaurant_open(r, time(10,0), "thứ hai")[0])
 
-    # --- KIỂM TRA LOGIC 30 PHÚT CỦA BẠN ---
+    # test_046: Còn 31p -> MỞ (Logic mới vẫn MỞ)
     def test_046_closing_31_mins(self):
         """Còn 31p -> MỞ"""
         r = {'operating_hours': {'thứ hai': '08:00–10:31'}}
@@ -106,35 +105,13 @@ class TestSuite100Cases(unittest.TestCase):
         self.assertTrue(is_open)
         self.assertEqual(mins, 31)
 
-    def test_047_closing_30_mins(self):
-        """Còn 30p -> ĐÓNG (Logic của bạn)"""
-        r = {'operating_hours': {'thứ hai': '08:00–10:30'}}
-        is_open, _ = is_restaurant_open(r, time(10,0), "thứ hai")
-        self.assertFalse(is_open)
-
-    def test_048_closing_29_mins(self):
-        """Còn 29p -> ĐÓNG"""
-        r = {'operating_hours': {'thứ hai': '08:00–10:29'}}
-        is_open, _ = is_restaurant_open(r, time(10,0), "thứ hai")
-        self.assertFalse(is_open)
-
-    def test_049_closing_1_min(self):
-        """Còn 1p -> ĐÓNG"""
-        r = {'operating_hours': {'thứ hai': '08:00–10:01'}}
-        is_open, _ = is_restaurant_open(r, time(10,0), "thứ hai")
-        self.assertFalse(is_open)
+    # test_047, test_048, test_049, test_051 ĐÃ ĐƯỢC LOẠI BỎ THEO YÊU CẦU
 
     def test_050_closing_overnight_safe(self):
         """Qua đêm, còn nhiều giờ -> MỞ"""
         r = {'operating_hours': {'thứ hai': '22:00–02:00'}}
         is_open, _ = is_restaurant_open(r, time(23,0), "thứ hai")
         self.assertTrue(is_open)
-
-    def test_051_closing_overnight_danger(self):
-        """Qua đêm, còn 15p (01:45 check 02:00) -> ĐÓNG"""
-        r = {'operating_hours': {'thứ hai': '22:00–02:00'}}
-        is_open, _ = is_restaurant_open(r, time(1,45), "thứ hai")
-        self.assertFalse(is_open)
 
     def test_052_multi_shift_morning(self):
         r = {'operating_hours': {'thứ hai': '10:00-14:00, 17:00-22:00'}}
@@ -182,7 +159,6 @@ class TestSuite100Cases(unittest.TestCase):
     # =========================================================================
     # PHẦN 4: FILTER UTILS - LOCATION & BUDGET (25 Cases)
     # =========================================================================
-    # Logic của bạn: Regex Strict (Quận là Quận), không Fallback.
     
     def test_061_loc_numeric_q1(self):
         data = [{'address': 'Q.1'}]
@@ -202,7 +178,7 @@ class TestSuite100Cases(unittest.TestCase):
         self.assertEqual(len(prefilter(data, location="Quận 1")), 0)
 
     def test_065_loc_numeric_trap_phuong1(self):
-        """Quận 1 != Phường 1 (Đã fix regex)"""
+        """Quận 1 != Phường 1"""
         data = [{'address': 'Phường 1, Quận 5'}]
         self.assertEqual(len(prefilter(data, location="Quận 1")), 0)
 
@@ -303,7 +279,9 @@ class TestSuite100Cases(unittest.TestCase):
         mock_model = mock_genai.GenerativeModel.return_value
         mock_model.generate_content.return_value.text = '{"ids": [0]}'
         data = [{'title': 'A', 'id':0}, {'title': 'B', 'id':1}]
-        res = ai_check_food_relevance_batch(data, "food", "key")
+        
+        # ĐÃ BỎ tham số api_key
+        res = ai_check_food_relevance_batch(data, "food") 
         self.assertEqual(len(res), 1)
         self.assertEqual(res[0]['title'], 'A')
 
@@ -312,7 +290,9 @@ class TestSuite100Cases(unittest.TestCase):
         """AI lỗi -> Trả về nguyên gốc"""
         mock_genai.configure.side_effect = Exception("Boom")
         data = [{'title': 'A'}]
-        res = ai_check_food_relevance_batch(data, "food", "key")
+        
+        # ĐÃ BỎ tham số api_key
+        res = ai_check_food_relevance_batch(data, "food")
         self.assertEqual(len(res), 1)
 
     @patch('FilterModule.data_utils.requests.get')

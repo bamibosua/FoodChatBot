@@ -1,12 +1,34 @@
 import json
 import time
+import math
 import requests
 from serpapi.google_search import GoogleSearch
 
-# --- CẤU HÌNH OSM (PHAO CỨU SINH MIỄN PHÍ) ---
+# --- CẤU HÌNH CƠ BẢN ---
 NOMINATIM_URL = "https://nominatim.openstreetmap.org/search"
 UA = {"User-Agent": "FoodApp_StudentProject/1.0"}
 
+def calculate_distance(lat1, lon1, lat2, lon2):
+    """
+    Tính khoảng cách giữa 2 điểm GPS (đơn vị: km) dùng công thức Haversine.
+    """
+    if not lat1 or not lon1 or not lat2 or not lon2:
+        return 9999.0 # Nếu thiếu tọa độ, coi như rất xa
+        
+    R = 6371.0 # Bán kính trái đất (km)
+
+    dlat = math.radians(lat2 - lat1)
+    dlon = math.radians(lon2 - lon1)
+    a = (math.sin(dlat / 2) * math.sin(dlat / 2) +
+         math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) *
+         math.sin(dlon / 2) * math.sin(dlon / 2))
+    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+    distance = R * c
+
+    return distance
+# ------------------------------------------------------------
+# 1) Geocode Fallback (OSM)
+# ------------------------------------------------------------
 def geocode_osm_fallback(query):
     """
     Tìm tọa độ bằng OpenStreetMap nếu Google (SerpApi) bị lỗi.
@@ -34,9 +56,12 @@ def geocode_osm_fallback(query):
     return None, None
 
 # ------------------------------------------------------------
-# 1) Geocode: SerpApi -> Lỗi thì sang OSM
+# 2) Geocode Chính (SerpApi -> Lỗi thì sang OSM)
 # ------------------------------------------------------------
 def geocode_location(text_location: str, api_key: str):
+    """
+    Chuyển tên địa điểm thành tọa độ (lat, lng) sử dụng SerpApi, với OSM là Fallback.
+    """
     print(f"🌍 Geocoding (SerpApi): '{text_location}'...")
     
     params = {
@@ -53,10 +78,6 @@ def geocode_location(text_location: str, api_key: str):
         search = GoogleSearch(params)
         results = search.get_dict()
 
-        # # Debug
-        # with open("debug_geocode.json", "w", encoding="utf-8") as f:
-        #     json.dump(results, f, ensure_ascii=False, indent=4)
-
         # --- KIỂM TRA LỖI API GOOGLE ---
         if "error" in results:
             print(f"   ❌ SERPAPI ERROR: {results['error']}")
@@ -67,7 +88,7 @@ def geocode_location(text_location: str, api_key: str):
 
         lat, lng = None, None
 
-        # Chiến thuật tìm kiếm của SerpApi
+        # Chiến thuật tìm kiếm tọa độ trong kết quả của SerpApi
         fallback_sources = [
             ("place_results", "gps_coordinates"),
             ("local_results", lambda x: x[0].get("gps_coordinates") if x else None),
@@ -108,15 +129,14 @@ def geocode_location(text_location: str, api_key: str):
         raise
 
 # ------------------------------------------------------------
-# 2) Fetch local places từ Google Maps engine
+# 3) Fetch local places từ Google Maps engine
 # ------------------------------------------------------------
 def fetch_places_google_maps(query: str, lat: float, lng: float, api_key: str, 
                              output_file="output.json"):
     """
-    Tìm kiếm địa điểm quanh tọa độ GPS.
-    Có cơ chế thử nhiều mức Zoom để tránh lỗi "No results" ở vùng quê.
+    Tìm kiếm địa điểm quanh tọa độ GPS với cơ chế thử nhiều mức Zoom.
     """
-    # Các mức zoom để thử: 15 (Gần), 13 (Vừa), 12 (Xa)
+    # Các mức zoom để thử: 15 (Gần) -> 10 (Rất xa)
     zoom_levels = [15, 13, 12, 11, 10]
     
     for zoom in zoom_levels:
@@ -161,3 +181,4 @@ def fetch_places_google_maps(query: str, lat: float, lng: float, api_key: str,
             
     print("❌ Đã thử mọi mức Zoom nhưng không tìm thấy quán nào.")
     return []
+

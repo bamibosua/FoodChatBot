@@ -1,55 +1,54 @@
 import re
 
+# Giữ nguyên hàm cũ nếu cần dùng chỗ khác
 def parse_price(price_str):
+    rng = parse_price_range(price_str)
+    return rng[1] if rng else None
+
+def parse_price_range(price_str):
     """
-    Chuẩn hóa chuỗi giá thành số nguyên (lấy giá trị Max/Upper Bound).
+    Trả về tuple (min_price, max_price).
+    Ví dụ: 
+    - "20k - 50k" -> (20000, 50000)
+    - "30k"       -> (30000, 30000)
+    - "$$"        -> (50000, 150000) (Ước lượng)
     """
-    if not price_str:
-        return None
+    if not price_str: return None
     
-    # 1. Chuẩn hóa: lowercase, thay phẩy thành chấm để thống nhất xử lý
-    # VD: "2,5k" -> "2.5k"
+    # 1. Xử lý Price Level (Symbol) của Google Maps
+    if '$$$$' in price_str: return (500000, 2000000) # Hạng sang
+    if '$$$' in price_str:  return (200000, 500000)  # Đắt
+    if '$$' in price_str:   return (50000, 200000)   # Trung bình
+    if '$' in price_str:    return (0, 50000)        # Rẻ
+    
+    # 2. Xử lý chuỗi số (giống logic cũ nhưng lấy hết các số)
     raw_str = price_str.lower().replace(',', '.')
-    
     try:
-        # 2. Regex bắt số và đơn vị k
         matches = re.findall(r'(\d+(?:\.\d+)?)\s*(k)?', raw_str)
-        
         parsed_prices = []
+        
         for num_str, unit in matches:
             val = 0.0
-            
-            # --- LOGIC THÔNG MINH XỬ LÝ DẤU CHẤM ---
-            # Kiểm tra xem dấu chấm có phải là phân cách hàng nghìn không?
-            # Quy tắc: Nếu sau dấu chấm là đúng 3 chữ số (VD: .000, .500) -> Là hàng nghìn
             is_thousand_sep = False
             if '.' in num_str:
                 parts = num_str.split('.')
-                # Nếu phần đuôi có đúng 3 ký tự (VD: 50.000 hoặc 1.500)
                 if len(parts) > 1 and all(len(p) == 3 for p in parts[1:]):
                     is_thousand_sep = True
             
-            if is_thousand_sep:
-                # Trường hợp 50.000 -> Xóa chấm -> 50000
-                val = float(num_str.replace('.', ''))
-            else:
-                # Trường hợp 2.5 -> Giữ nguyên chấm -> 2.5
-                val = float(num_str)
+            if is_thousand_sep: val = float(num_str.replace('.', ''))
+            else: val = float(num_str)
             
-            # --- XỬ LÝ ĐƠN VỊ ---
-            if unit == 'k':
-                val *= 1000
-            elif val < 1000: 
-                # Số quá nhỏ (VD: 50, 2.5) -> Nhân 1000
-                val *= 1000
-                
+            if unit == 'k' or val < 1000: val *= 1000
             parsed_prices.append(int(val))
             
-        if not parsed_prices:
-            return None
+        if not parsed_prices: return None
         
-        # 3. Trả về giá trị lớn nhất (Upper bound)
-        return max(parsed_prices)
+        # 3. Trả về (Min, Max)
+        # Nếu chỉ tìm thấy 1 số (vd: "35k") -> Min=35k, Max=35k
+        if len(parsed_prices) == 1:
+            return (parsed_prices[0], parsed_prices[0])
+            
+        return (min(parsed_prices), max(parsed_prices))
     
     except Exception:
         return None
