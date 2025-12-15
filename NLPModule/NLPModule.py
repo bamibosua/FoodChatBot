@@ -1,40 +1,56 @@
 from NLPModule.ai.fixSpelling import AIFixSpellingErrors
 from NLPModule.ai.AIForMissingFields import aiReplyForMissingFields
 from NLPModule.ai.replyForUser import replyForUser
+from NLPModule.ai.aiReplyRecommend import aiReplyFoodRecommend
+from NLPModule.ai.aiIntentClassfication import aiIntentClassification
+
 from NLPModule.ner.extractor import nerExtractor
 from NLPModule.ner.normalize import normalizeFields
-from NLPModule.utils.checkIsInHCM import isInHCM
 from Translator.translator import translate_text, get_original_language
 
-def isInHCMMain(city: str):
-    return isInHCM(city)
+from Translator.state import set_lang
     
 def analyzeUserInput(userInput: str):
-    original_lang = get_original_language(userInput)
     fixedInput = AIFixSpellingErrors(userInput)
+    original_lang = get_original_language(userInput)
+    set_lang(original_lang)
 
-    if original_lang != 'en':
-        fixedInput = translate_text(fixedInput, 'en')
+    print(f"DEBUG analyzeUserInput: {original_lang}")
 
-    print(f"DEBUG: {fixedInput}")
-          
-    rawExtraction = nerExtractor(fixedInput)
-    normalized = normalizeFields(rawExtraction)
 
+    if original_lang != 'vi':
+        fixedInput = translate_text(fixedInput, 'vi')
+        print(f"DEBUG analyzeUserInput:{fixedInput}")
+
+    raw = nerExtractor(fixedInput)
+    normalized = normalizeFields(raw)
     return normalized
 
 def replyMissingFields(missingFields, currentData, original_lang):
-    prompt = aiReplyForMissingFields(missingFields, currentData)
+    answer = aiReplyForMissingFields(missingFields, currentData)
     if(original_lang != 'en'):
-        prompt = translate_text(prompt, dest_lang=original_lang)
-    return prompt
-
-def reply(data: dict, original_lang):
-    answer = replyForUser(data)
-
-    if original_lang != 'en':
+        print(f"Debug reply missing fields reply: {original_lang}")
         answer_translated = translate_text(answer, dest_lang=original_lang)
         return answer_translated
     return answer
 
+def reply(data: dict, original_lang):
+    answer = replyForUser(data, original_lang)
+    print(f"DEBUG reply language:{original_lang}")
 
+    if original_lang != 'en':
+        answer_translated = translate_text(answer, original_lang)
+        return answer_translated
+    return answer
+
+def replyRecommendFood(data, original_lang):
+    answer = aiReplyFoodRecommend(data)
+    if original_lang != 'en':
+            answer_translated = translate_text(answer, dest_lang=original_lang)
+            return answer_translated
+    return answer
+
+def userIntentClassification(userInput):
+    answer = aiIntentClassification(userInput)
+
+    return answer
