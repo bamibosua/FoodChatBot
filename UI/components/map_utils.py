@@ -11,22 +11,22 @@ SERP_API_KEY = get_serp_key()
 
 # Nominatim (OpenStreetMap)
 # Dùng để chuyển địa chỉ (text) -> tọa độ (latitude, longitude)
-NOMINATIM = "https://nominatim.openstreetmap.org"
+NOMINATIM = ""
 
 # OpenRouteService
 # API chính để tính toán đường đi (routing) bằng xe hơi
-ORS_URL = "https://api.openrouteservice.org/v2/directions/driving-car"
+ORS_URL = ""
 
 # API key của ORS
 # Ưu tiên lấy từ biến môi trường, nếu không có thì dùng key mặc định
 ORS_KEY = os.getenv(
-    "ORS_KEY",
-    "eyJvcmciOiI1YjNjZTM1OTc4NTExMTAwMDFjZjYyNDgiLCJpZCI6Ijc0NTJjMTMyNWEzMjQwMDI5ZDAxMTViOGJjZjg5YTU2IiwiaCI6Im11cm11cjY0In0="
+    "",
+    ""
 )
 
 # OSRM public server
 # Dùng làm phương án dự phòng khi ORS bị lỗi
-OSRM = "https://router.project-osrm.org"
+OSRM = ""
 
 # User-Agent
 UA = {

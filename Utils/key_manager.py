@@ -2,12 +2,12 @@
 
 # Tổng hợp tất cả key free vào đây
 SHARED_GEMINI_KEYS = [
-    "AIzaSyCQnxAYMlfsh7PK93u8vk3GGQGjp247UA4",    # Key 8
+    "",    # Key 8
 ]
 
-SHARED_GROQ_KEYS = ["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"]
+SHARED_GROQ_KEYS = [""]
 
-SERP_API_KEY_CONSTANT = "ed7e0f948642507971435618a25e646ddb5d2e9f5d46f7b84db783108e232800"
+SERP_API_KEY_CONSTANT = ""
 
 GEMINI_MODEL_NAME_CONSTANT = "gemini-2.5-flash"
 GROQ_MODEL_SMART = "llama-3.3-70b-versatile" # 70B (1K RPD)
